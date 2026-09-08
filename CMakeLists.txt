@@ -46,6 +46,7 @@ option(BuildMPRend2 "Whether to create projects for the EXPERIMENTAL MP rend2 re
 option(BuildSPEngine "Whether to create projects for the SP engine (openjk_sp.exe)" ON)
 option(BuildSPGame "Whether to create projects for the SP gamecode (jagamex86.dll)" ON)
 option(BuildSPRdVanilla "Whether to create projects for the SP default renderer (rdsp-vanilla_x86.dll)" ON)
+option(BuildSPRdGLES3 "Whether to create projects for the SP GLES3 renderer (rdsp-gles3_x86.dll)" OFF)
 
 option(BuildJK2SPEngine "Whether to create projects for the jk2 SP engine (openjo_sp.exe)" OFF)
 option(BuildJK2SPGame "Whether to create projects for the jk2 sp gamecode mod (jk2gamex86.dll)" OFF)
@@ -168,6 +169,7 @@ endif()
 set(SPEngine "openjk_sp.${Architecture}")
 set(SPGame "jagame${Architecture}")
 set(SPRDVanillaRenderer "rdsp-vanilla_${Architecture}")
+set(SPRDGLES3Renderer "rdsp-gles3_${Architecture}")
 set(MPEngine "openjk.${Architecture}")
 set(MPVanillaRenderer "rd-vanilla_${Architecture}")
 set(MPDed "openjkded.${Architecture}")
@@ -331,6 +333,8 @@ endif()
 
 if(AURORA)
 	set(AuroraDefines ${AuroraDefines} "AURORA" "WL_EGL_PLATFORM" "AURORA_ORG=\"ru.sashikknox\"" "AURORA_APP=\"openjk\"")
+	# AuroraOS has no desktop GL: build the GLES3 renderer by default there.
+	set(BuildSPRdGLES3 ON CACHE BOOL "Whether to create projects for the SP GLES3 renderer (rdsp-gles3_x86.dll)" FORCE)
 endif()
 
 #=============================================================================

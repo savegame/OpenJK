@@ -1078,7 +1078,12 @@ static CMiniHeap *GetG2VertSpaceServer( void ) {
 #ifdef JK2_MODE
 #define DEFAULT_RENDER_LIBRARY	"rdjosp-vanilla"
 #else
+#ifdef AURORA
+// AuroraOS has no desktop GL; the GLES3 renderer is the default there.
+#define DEFAULT_RENDER_LIBRARY	"rdsp-gles3"
+#else
 #define DEFAULT_RENDER_LIBRARY	"rdsp-vanilla"
+#endif
 #endif
 
 void CL_InitRef( void ) {
