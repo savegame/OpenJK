@@ -48,10 +48,19 @@ if(BuildSPEngine OR BuildJK2SPEngine)
 	#    Dependencies
 
 	if (NOT WIN32)
-		# OpenGL
-		find_package(OpenGL REQUIRED)
-		set(SPEngineIncludeDirectories ${SPEngineIncludeDirectories} ${OPENGL_INCLUDE_DIR})
-		set(SPEngineLibraries ${SPEngineLibraries} ${OPENGL_LIBRARIES})
+		if(AURORA)
+			# AuroraOS target has no desktop OpenGL; GLES3/EGL only
+			find_package(PkgConfig REQUIRED)
+			pkg_check_modules(GLESV2 REQUIRED glesv2)
+			pkg_check_modules(EGL REQUIRED egl)
+			set(SPEngineIncludeDirectories ${SPEngineIncludeDirectories} ${GLESV2_INCLUDE_DIRS} ${EGL_INCLUDE_DIRS})
+			set(SPEngineLibraries ${SPEngineLibraries} ${GLESV2_LINK_LIBRARIES} ${EGL_LINK_LIBRARIES})
+		else()
+			# OpenGL
+			find_package(OpenGL REQUIRED)
+			set(SPEngineIncludeDirectories ${SPEngineIncludeDirectories} ${OPENGL_INCLUDE_DIR})
+			set(SPEngineLibraries ${SPEngineLibraries} ${OPENGL_LIBRARIES})
+		endif()
 	endif()
 
 	# OpenAL (is optionally included for Windows)
