@@ -745,6 +745,12 @@ int main ( int argc, char* argv[] )
 	int		i;
 	char	commandLine[ MAX_STRING_CHARS ] = { 0 };
 
+#ifdef AURORA
+	// AuroraOS: request the Maemo audio role from PulseAudio
+	// before any sound system (OpenAL/SDL) is initialised.
+	setenv( "PULSE_PROP_media.role", "x-maemo", 1 );
+#endif
+
 	Sys_PlatformInit( argc, argv );
 	CON_Init();
 

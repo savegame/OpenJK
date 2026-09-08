@@ -55,6 +55,8 @@ option(BuildTests "Whether to build automatic unit tests (requires Boost)" OFF)
 option(UseAddressSanitizer "Whether to enable runtime address sanitizer" OFF)
 option(UseUndefinedSanitizer "Whether to enable runtime Undefined Behavior sanitizer" OFF)
 
+option(AURORA "Build for AuroraOS (Wayland/GLES3)" OFF)
+
 include(CMakeDependentOption)
 cmake_dependent_option(BuildSymbolServer "Build WIP Windows Symbol Server (experimental and unused)" OFF "NOT WIN32 OR NOT MSVC" OFF)
 
@@ -325,6 +327,10 @@ set(SharedDefines ${SharedDefines} "$<$<NOT:$<CONFIG:Debug>>:FINAL_BUILD>")
 
 if(BuildPortableVersion)
 	set(BUILD_PORTABLE ON)
+endif()
+
+if(AURORA)
+	set(AuroraDefines ${AuroraDefines} "AURORA" "WL_EGL_PLATFORM" "AURORA_ORG=\"ru.sashikknox\"" "AURORA_APP=\"openjk\"")
 endif()
 
 #=============================================================================

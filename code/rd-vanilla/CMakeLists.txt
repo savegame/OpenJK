@@ -34,7 +34,7 @@ if(BuildSPRdVanilla OR BuildJK2SPRdVanilla)
 	# Modular Renderer crap (let's hope this works..)
 
 	# Defines
-	set(SPRDVanillaDefines ${SharedDefines} "RENDERER" "_JK2EXE")
+	set(SPRDVanillaDefines ${SharedDefines} "RENDERER" "_JK2EXE" ${AuroraDefines})
 
 	# Files
 

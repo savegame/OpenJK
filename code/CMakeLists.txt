@@ -36,7 +36,7 @@ if(BuildSPEngine OR BuildJK2SPEngine)
 		set(SPEngineLibraries "winmm")
 	endif(WIN32)
 	# Defines
-	set(SPEngineDefines ${SharedDefines} "_JK2EXE") # it's called JK2EXE but it really just means Singleplayer Exe
+	set(SPEngineDefines ${SharedDefines} "_JK2EXE" ${AuroraDefines}) # it's called JK2EXE but it really just means Singleplayer Exe
 
 	set(SPEngineIncludeDirectories
 		${SPEngineIncludeDirectories}

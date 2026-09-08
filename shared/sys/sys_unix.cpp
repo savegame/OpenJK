@@ -502,6 +502,26 @@ char *Sys_DefaultHomePath(void)
 
 	return homePath;
 }
+#elif defined(AURORA)
+#define AURORA_STR2(x) #x
+#define AURORA_STR(x) AURORA_STR2(x)
+char *Sys_DefaultHomePath(void)
+{
+	char *p;
+
+	if ( !homePath[0] )
+	{
+		if ( (p = getenv( "HOME" )) != NULL )
+		{
+			// AuroraOS sandbox: ~/.local/share/<AURORA_ORG>/<AURORA_APP>
+			Com_sprintf( homePath, sizeof( homePath ), "%s%c.local%cshare%c%s%c%s",
+							p, PATH_SEP, PATH_SEP, PATH_SEP,
+							AURORA_STR( AURORA_ORG ), PATH_SEP, AURORA_STR( AURORA_APP ) );
+		}
+	}
+
+	return homePath;
+}
 #else
 char *Sys_DefaultHomePath(void)
 {
