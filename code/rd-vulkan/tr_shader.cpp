@@ -3140,10 +3140,6 @@ shader_t *R_FindShader( const char *name, const int *lightmapIndex, const byte *
 	image_t		*image;
 	shader_t	*sh;
 	
-	// SP: after Hunk_Clear/R_ClearStuffToStopGhoul2CrashingThings the renderer
-	// is dead until RE_BeginRegistration re-inits it; jagame may register
-	// models in that window. Answer NULL like vanilla expects (its glm loader
-	// skips such surfaces) instead of walking freed shader memory.
 	if ( tr.defaultShader == NULL ) {
 		return NULL;
 	}

@@ -1121,12 +1121,11 @@ void G2API_SetSurfaceOnOffFromSkin (CGhoul2Info *ghlInfo, qhandle_t renderSkin)
 	int j;
 	const skin_t	*skin;
 
-	// SP: in the dead window after Hunk_Clear (renderer memset, shaders and
-	// skins freed) skin data is unusable; vanilla effectively skips this too
-	// (its R_GetSkinByHandle yields NULL there and it returns early).
-	if ( tr.defaultShader == NULL )
-		return;
-
+	// SP: mirror rd-vanilla - in the window between Hunk_Clear (renderer
+	// memset) and RE_BeginRegistration, the game re-registers skins, after
+	// which R_GetSkinByHandle yields valid skin data and the surface on/off
+	// list must be (re)built. Blocking here left dead-window-spawned NPCs
+	// rendering "*off" skin surfaces.
 	skin = R_GetSkinByHandle( renderSkin );
 	//FIXME:  using skin handles means we have to increase the numsurfs in a skin, but reading directly would cause file hits, we need another way to cache or just deal with the larger skin_t
 

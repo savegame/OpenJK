@@ -175,6 +175,22 @@ qhandle_t RE_RegisterIndividualSkin( const char *name , qhandle_t hSkin)
 
 		if (gServerSkinHack)	surf->shader = R_FindServerShader( token, lightmapsNone, stylesDefault, qtrue );
 		else					surf->shader = R_FindShader( token, lightmapsNone, stylesDefault, qtrue );
+		if ( !surf->shader )
+		{	// SP: in the dead window after Hunk_Clear/R_ClearStuffToStopGhoul2CrashingThings
+			// R_FindShader answers NULL (renderer state is memset). The skin is only
+			// consumed by G2API_SetSurfaceOnOffFromSkin there, which needs the shader
+			// NAME (to detect "*off") - so keep the token in a pooled stand-in.
+			// The pool must never recycle entries: dead-window skins are looked up
+			// while they are still referenced, and re-registration of the same skin
+			// (menus, precache) happens repeatedly in that window.
+			static shader_t	s_deadWindowShaders[8192];
+			static int		s_deadWindowShaderCount;
+			shader_t		*dummy = &s_deadWindowShaders[
+				(s_deadWindowShaderCount < 8192) ? s_deadWindowShaderCount++ : 8191 ];
+			memset( dummy, 0, sizeof( *dummy ) );
+			Q_strncpyz( dummy->name, token, sizeof( dummy->name ) );
+			surf->shader = dummy;
+		}
 		skin->numSurfaces++;
 	}
 
