@@ -26,7 +26,6 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "ghoul2/G2.h"
 #include "ghoul2/G2.h"
 #include "qcommon/matcomp.h"
-#include "qcommon/disablewarnings.h"
 
 static	int			r_firstSceneDrawSurf;
 #ifdef USE_PMLIGHT
@@ -122,7 +121,8 @@ RE_AddPolyToScene
 
 =====================
 */
-void RE_AddPolyToScene( qhandle_t hShader, int numVerts, const polyVert_t *verts, int numPolys ) {
+void RE_AddPolyToScene( qhandle_t hShader, int numVerts, const polyVert_t *verts ) {
+	const int numPolys = 1;
 	srfPoly_t		*poly;
 	int				i, j;
 	int				fogIndex;
@@ -223,11 +223,6 @@ void RE_AddRefEntityToScene( const refEntity_t *ent ) {
 	}*/
 
 	assert(!ent || ent->renderfx >= 0);
-
-	if (ent->reType == RT_ENT_CHAIN)
-	{ //minirefents must die.
-		return;
-	}
 
 #ifdef _DEBUG
 	if (ent->reType == RT_MODEL)
@@ -405,8 +400,6 @@ void RE_RenderScene( const refdef_t *fd ) {
 	if (!tr.world && !(fd->rdflags & RDF_NOWORLDMODEL)) {
 		Com_Error(ERR_DROP, "R_RenderScene: NULL worldmodel");
 	}
-
-	memcpy(tr.refdef.text, fd->text, sizeof(tr.refdef.text));
 
 	tr.refdef.x = fd->x;
 	tr.refdef.y = fd->y;

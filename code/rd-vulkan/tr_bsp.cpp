@@ -538,7 +538,7 @@ static void GenerateNormals( srfSurfaceFace_t *face )
 	indices = ((int*)((byte*)face + face->ofsIndices));
 
 	// store as vec4_t so we can simply use memcpy() during tesselation
-	face->normals = (float*)R_Hunk_Alloc(face->numPoints * sizeof(tess.normal[0]), h_low);
+	face->normals = (float*)R_Hunk_Alloc(face->numPoints * sizeof(tess.normal[0]), qtrue);
 
 	for (i = 0; i < face->numIndices; i += 3) {
 		i0 = indices[i + 0];
@@ -1780,7 +1780,7 @@ static void R_LoadNodesAndLeafs ( const lump_t *nodeLump, const lump_t *leafLump
 	numNodes = nodeLump->filelen / sizeof(dnode_t);
 	numLeafs = leafLump->filelen / sizeof(dleaf_t);
 
-	out = (struct mnode_s *)R_Hunk_Alloc ( (numNodes + numLeafs) * sizeof(*out), h_low);
+	out = (struct mnode_s *)R_Hunk_Alloc ( (numNodes + numLeafs) * sizeof(*out), qtrue);
 
 	worldData.nodes = out;
 	worldData.numnodes = numNodes + numLeafs;
@@ -1879,7 +1879,7 @@ static	void R_LoadMarksurfaces ( const lump_t *l, world_t &worldData )
 	if (l->filelen % sizeof(*in))
 		Com_Error (ERR_DROP, "LoadMap: funny lump size in %s",worldData.name);
 	count = l->filelen / sizeof(*in);
-	out = (struct msurface_s **)R_Hunk_Alloc ( count*sizeof(*out), h_low);
+	out = (struct msurface_s **)R_Hunk_Alloc ( count*sizeof(*out), qtrue);
 
 	worldData.marksurfaces = out;
 	worldData.nummarksurfaces = count;
@@ -1907,7 +1907,7 @@ static	void R_LoadPlanes( const lump_t *l, world_t &worldData ) {
 	if (l->filelen % sizeof(*in))
 		Com_Error (ERR_DROP, "LoadMap: funny lump size in %s",worldData.name);
 	count = l->filelen / sizeof(*in);
-	out = (struct cplane_s *)R_Hunk_Alloc ( count*2*sizeof(*out), h_low);
+	out = (struct cplane_s *)R_Hunk_Alloc ( count*2*sizeof(*out), qtrue);
 
 	worldData.planes = out;
 	worldData.numplanes = count;
@@ -1968,7 +1968,7 @@ static	void R_LoadFogs( const lump_t *l, const lump_t *brushesLump, lump_t *side
 
 	// create fog strucutres for them
 	worldData.numfogs = count + 1;
-	worldData.fogs = (fog_t *)R_Hunk_Alloc ( worldData.numfogs*sizeof(*out), h_low);
+	worldData.fogs = (fog_t *)R_Hunk_Alloc ( worldData.numfogs*sizeof(*out), qtrue);
 	worldData.globalFog = -1;
 	out = worldData.fogs + 1;
 
@@ -2364,7 +2364,7 @@ void RE_LoadWorldMap_Actual( const char *name, world_t &worldData, int index )
 	COM_StripExtension( worldData.baseName, worldData.baseName, sizeof( worldData.baseName ) );
 	COM_StripExtension( tr.worldDir, tr.worldDir, sizeof( tr.worldDir ) );
 
-	startMarker = (byte *)R_Hunk_Alloc(0, h_low);
+	startMarker = (byte *)R_Hunk_Alloc(0, qtrue);
 	c_gridVerts = 0;
 
 	header = (dheader_t *)buffer;
@@ -2397,7 +2397,7 @@ void RE_LoadWorldMap_Actual( const char *name, world_t &worldData, int index )
 	R_BuildWorldVBO(s_worldData.surfaces, s_worldData.numsurfaces);
 #endif
 
-	worldData.dataSize = (byte *)R_Hunk_Alloc(0, h_low) - startMarker;
+	worldData.dataSize = (byte *)R_Hunk_Alloc(0, qtrue) - startMarker;
 
 	if (!index)
 	{

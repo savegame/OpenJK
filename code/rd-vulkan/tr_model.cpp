@@ -24,7 +24,6 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "tr_local.h"
 #include "tr_cache.h"
-#include "qcommon/disablewarnings.h"
 #include "qcommon/sstring.h"	// #include <string>
 
 #include <vector>
@@ -180,7 +179,7 @@ model_t *R_AllocModel( void ) {
 		return NULL;
 	}
 
-	mod = (model_t *)ri.Hunk_Alloc( sizeof( *tr.models[tr.numModels] ), h_low );
+	mod = (model_t *)R_Hunk_Alloc( sizeof( *tr.models[tr.numModels] ), qtrue );
 	mod->index = tr.numModels;
 	tr.models[tr.numModels] = mod;
 	tr.numModels++;
@@ -213,558 +212,7 @@ static qhandle_t RE_RegisterBSP(const char *name)
 
 	return modelHandle;
 }
-
-//rww - Please forgive me for all of the below. Feel free to destroy it and replace it with something better.
-//You obviously can't touch anything relating to shaders or ri-> functions here in case a dedicated
-//server is running, which is the entire point of having these seperate functions. If anything major
-//is changed in the non-server-only versions of these functions it would be wise to incorporate it
-//here as well.
-
-/*
-=================
-R_LoadMDXA_Server - load a Ghoul 2 animation file
-=================
-*/
-qboolean R_LoadMDXA_Server( model_t *mod, void *buffer, const char *mod_name, qboolean &bAlreadyCached ) {
-
-	mdxaHeader_t		*pinmodel, *mdxa;
-	int					version;
-	int					size;
-
-#ifdef Q3_BIG_ENDIAN
-	int					j, k, i;
-	mdxaSkel_t			*boneInfo;
-	mdxaSkelOffsets_t	*offsets;
-	int					maxBoneIndex = 0;
-	mdxaCompQuatBone_t	*pCompBonePool;
-	unsigned short		*pwIn;
-	mdxaIndex_t			*pIndex;
-	int					tmp;
-#endif
-
- 	pinmodel = (mdxaHeader_t *)buffer;
-	//
-	// read some fields from the binary, but only LittleLong() them when we know this wasn't an already-cached model...
-	//
-	version = (pinmodel->version);
-	size	= (pinmodel->ofsEnd);
-
-	if (!bAlreadyCached)
-	{
-		LL(version);
-		LL(size);
-	}
-
-	if (version != MDXA_VERSION) {
-		return qfalse;
-	}
-
-	mod->type		= MOD_MDXA;
-	mod->dataSize  += size;
-
-	qboolean bAlreadyFound = qfalse;
-	mdxa = (mdxaHeader_t*)CModelCache->Allocate( size, buffer, mod_name, &bAlreadyFound, TAG_MODEL_GLA );
-	mod->data.gla = mdxa;
-
-	assert(bAlreadyCached == bAlreadyFound);	// I should probably eliminate 'bAlreadyFound', but wtf?
-
-	if (!bAlreadyFound)
-	{
-		// horrible new hackery, if !bAlreadyFound then we've just done a tag-morph, so we need to set the
-		//	bool reference passed into this function to true, to tell the caller NOT to do an ri.FS_Freefile since
-		//	we've hijacked that memory block...
-		//
-		// Aaaargh. Kill me now...
-		//
-		bAlreadyCached = qtrue;
-		assert( mdxa == buffer );
-//		memcpy( mdxa, buffer, size );	// and don't do this now, since it's the same thing
-
-		LL(mdxa->ident);
-		LL(mdxa->version);
-		//LF(mdxa->fScale);
-		LL(mdxa->numFrames);
-		LL(mdxa->ofsFrames);
-		LL(mdxa->numBones);
-		LL(mdxa->ofsCompBonePool);
-		LL(mdxa->ofsSkel);
-		LL(mdxa->ofsEnd);
-	}
-
- 	if ( mdxa->numFrames < 1 ) {
-		return qfalse;
-	}
-
-	if (bAlreadyFound)
-	{
-		return qtrue;	// All done, stop here, do not LittleLong() etc. Do not pass go...
-	}
-
-#ifdef Q3_BIG_ENDIAN
-	// swap the bone info
-	offsets = (mdxaSkelOffsets_t *)((byte *)mdxa + sizeof(mdxaHeader_t));
- 	for ( i = 0; i < mdxa->numBones ; i++ )
- 	{
-		LL(offsets->offsets[i]);
- 		boneInfo = (mdxaSkel_t *)((byte *)mdxa + sizeof(mdxaHeader_t) + offsets->offsets[i]);
-		LL(boneInfo->flags);
-		LL(boneInfo->parent);
-		for ( j = 0; j < 3; j++ )
-		{
-			for ( k = 0; k < 4; k++)
-			{
-				LF(boneInfo->BasePoseMat.matrix[j][k]);
-				LF(boneInfo->BasePoseMatInv.matrix[j][k]);
-			}
-		}
-		LL(boneInfo->numChildren);
-
-		for (k=0; k<boneInfo->numChildren; k++)
-		{
-			LL(boneInfo->children[k]);
-		}
-	}
-
-	// Determine the amount of compressed bones.
-
-	// Find the largest index by iterating through all frames.
-	// It is not guaranteed that the compressed bone pool resides
-	// at the end of the file.
-	for(i = 0; i < mdxa->numFrames; i++){
-		for(j = 0; j < mdxa->numBones; j++){
-			k		= (i * mdxa->numBones * 3) + (j * 3);	// iOffsetToIndex
-			pIndex	= (mdxaIndex_t *) ((byte *)mdxa + mdxa->ofsFrames + k);
-			tmp		= (pIndex->iIndex[2] << 16) + (pIndex->iIndex[1] << 8) + (pIndex->iIndex[0]);
-
-			if(maxBoneIndex < tmp){
-				maxBoneIndex = tmp;
-			}
-		}
-	}
-
-	// Swap the compressed bones.
-	pCompBonePool = (mdxaCompQuatBone_t *) ((byte *)mdxa + mdxa->ofsCompBonePool);
-	for ( i = 0 ; i <= maxBoneIndex ; i++ )
-	{
-		pwIn = (unsigned short *) pCompBonePool[i].Comp;
-
-		for ( k = 0 ; k < 7 ; k++ )
-			LS(pwIn[k]);
-	}
-#endif
-	return qtrue;
-}
-
-/*
-=================
-R_LoadMDXM_Server - load a Ghoul 2 Mesh file
-=================
-*/
-qboolean R_LoadMDXM_Server( model_t *mod, void *buffer, const char *mod_name, qboolean &bAlreadyCached ) {
-	int					i,l, j;
-	mdxmHeader_t		*pinmodel, *mdxm;
-	mdxmLOD_t			*lod;
-	mdxmSurface_t		*surf;
-	int					version;
-	int					size;
-	//shader_t			*sh;
-	mdxmSurfHierarchy_t	*surfInfo;
-
-#ifdef Q3_BIG_ENDIAN
-	int					k;
-	mdxmTriangle_t		*tri;
-	mdxmVertex_t		*v;
-	int					*boneRef;
-	mdxmLODSurfOffset_t	*indexes;
-	mdxmVertexTexCoord_t	*pTexCoords;
-	mdxmHierarchyOffsets_t	*surfIndexes;
-#endif
-
-
-	pinmodel= (mdxmHeader_t *)buffer;
-	//
-	// read some fields from the binary, but only LittleLong() them when we know this wasn't an already-cached model...
-	//
-	version = (pinmodel->version);
-	size	= (pinmodel->ofsEnd);
-
-	if (!bAlreadyCached)
-	{
-		LL(version);
-		LL(size);
-	}
-
-	if (version != MDXM_VERSION) {
-		return qfalse;
-	}
-
-	mod->type	   = MOD_MDXM;
-	mod->dataSize += size;
-
-	qboolean bAlreadyFound = qfalse;
-	mdxm = (mdxmHeader_t*)CModelCache->Allocate( size, buffer, mod_name, &bAlreadyFound, TAG_MODEL_GLM );
-	mod->data.glm = (mdxmData_t *)ri.Hunk_Alloc (sizeof (mdxmData_t), h_low);
-	mod->data.glm->header = mdxm;
-
-#ifdef USE_VBO_GHOUL2	
-	if (vk.vboGhoul2Active) {
-		// hmmm
-		mod->data.glm->vboModels = (mdxmVBOModel_t *)ri.Hunk_Alloc( sizeof (mdxmVBOModel_t) * mdxm->numLODs, h_low );
-	}
-#endif
-	assert(bAlreadyCached == bAlreadyFound);	// I should probably eliminate 'bAlreadyFound', but wtf?
-
-	if (!bAlreadyFound)
-	{
-		// horrible new hackery, if !bAlreadyFound then we've just done a tag-morph, so we need to set the
-		//	bool reference passed into this function to true, to tell the caller NOT to do an ri.FS_Freefile since
-		//	we've hijacked that memory block...
-		//
-		// Aaaargh. Kill me now...
-		//
-		bAlreadyCached = qtrue;
-		assert( mdxm == buffer );
-//		memcpy( mdxm, buffer, size );	// and don't do this now, since it's the same thing
-
-		LL(mdxm->ident);
-		LL(mdxm->version);
-		LL(mdxm->numBones);
-		LL(mdxm->numLODs);
-		LL(mdxm->ofsLODs);
-		LL(mdxm->numSurfaces);
-		LL(mdxm->ofsSurfHierarchy);
-		LL(mdxm->ofsEnd);
-	}
-
-	// first up, go load in the animation file we need that has the skeletal animation info for this model
-	mdxm->animIndex = RE_RegisterServerModel(va ("%s.gla",mdxm->animName));
-	if (!mdxm->animIndex)
-	{
-		return qfalse;
-	}
-
-	mod->numLods = mdxm->numLODs -1 ;	//copy this up to the model for ease of use - it wil get inced after this.
-
-	if (bAlreadyFound)
-	{
-		return qtrue;	// All done. Stop, go no further, do not LittleLong(), do not pass Go...
-	}
-
-	surfInfo = (mdxmSurfHierarchy_t *)( (byte *)mdxm + mdxm->ofsSurfHierarchy);
-#ifdef Q3_BIG_ENDIAN
-	surfIndexes = (mdxmHierarchyOffsets_t *)((byte *)mdxm + sizeof(mdxmHeader_t));
-#endif
- 	for ( i = 0 ; i < mdxm->numSurfaces ; i++)
-	{
-		LL(surfInfo->numChildren);
-		LL(surfInfo->parentIndex);
-
-		// do all the children indexs
-		for (j=0; j<surfInfo->numChildren; j++)
-		{
-			LL(surfInfo->childIndexes[j]);
-		}
-
-		// We will not be using shaders on the server.
-		//sh = 0;
-		// insert it in the surface list
-
-		surfInfo->shaderIndex = 0;
-
-		CModelCache->StoreShaderRequest(mod_name, &surfInfo->shader[0], &surfInfo->shaderIndex);
-
-#ifdef Q3_BIG_ENDIAN
-		// swap the surface offset
-		LL(surfIndexes->offsets[i]);
-		assert(surfInfo == (mdxmSurfHierarchy_t *)((byte *)surfIndexes + surfIndexes->offsets[i]));
-#endif
-
-		// find the next surface
-		surfInfo = (mdxmSurfHierarchy_t *)( (byte *)surfInfo + (intptr_t)( &((mdxmSurfHierarchy_t *)0)->childIndexes[ surfInfo->numChildren ] ));
-  	}
-
-	// swap all the LOD's	(we need to do the middle part of this even for intel, because of shader reg and err-check)
-	lod = (mdxmLOD_t *) ( (byte *)mdxm + mdxm->ofsLODs );
-	for ( l = 0 ; l < mdxm->numLODs ; l++)
-	{
-		LL(lod->ofsEnd);
-		// swap all the surfaces
-		surf = (mdxmSurface_t *) ( (byte *)lod + sizeof (mdxmLOD_t) + (mdxm->numSurfaces * sizeof(mdxmLODSurfOffset_t)) );
-		for ( i = 0 ; i < mdxm->numSurfaces ; i++)
-		{
-			LL(surf->thisSurfaceIndex);
-			LL(surf->ofsHeader);
-			LL(surf->numVerts);
-			LL(surf->ofsVerts);
-			LL(surf->numTriangles);
-			LL(surf->ofsTriangles);
-			LL(surf->numBoneReferences);
-			LL(surf->ofsBoneReferences);
-			LL(surf->ofsEnd);
-
-			if ( surf->numVerts > SHADER_MAX_VERTEXES ) {
-				return qfalse;
-			}
-			if ( surf->numTriangles*3 > SHADER_MAX_INDEXES ) {
-				return qfalse;
-			}
-
-			// change to surface identifier
-			surf->ident = SF_MDX;
-
-			// register the shaders
-#ifdef Q3_BIG_ENDIAN
-			// swap the LOD offset
-			indexes = (mdxmLODSurfOffset_t *)((byte *)lod + sizeof(mdxmLOD_t));
-			LL(indexes->offsets[surf->thisSurfaceIndex]);
-
-			// do all the bone reference data
-			boneRef = (int *) ( (byte *)surf + surf->ofsBoneReferences );
-			for ( j = 0 ; j < surf->numBoneReferences ; j++ )
-			{
-					LL(boneRef[j]);
-			}
-
-
-			// swap all the triangles
-			tri = (mdxmTriangle_t *) ( (byte *)surf + surf->ofsTriangles );
-			for ( j = 0 ; j < surf->numTriangles ; j++, tri++ )
-			{
-				LL(tri->indexes[0]);
-				LL(tri->indexes[1]);
-				LL(tri->indexes[2]);
-			}
-
-			// swap all the vertexes
-			v = (mdxmVertex_t *) ( (byte *)surf + surf->ofsVerts );
-			pTexCoords = (mdxmVertexTexCoord_t *) &v[surf->numVerts];
-
-			for ( j = 0 ; j < surf->numVerts ; j++ )
-			{
-				LF(v->normal[0]);
-				LF(v->normal[1]);
-				LF(v->normal[2]);
-
-				LF(v->vertCoords[0]);
-				LF(v->vertCoords[1]);
-				LF(v->vertCoords[2]);
-
-				LF(pTexCoords[j].texCoords[0]);
-				LF(pTexCoords[j].texCoords[1]);
-
-				LL(v->uiNmWeightsAndBoneIndexes);
-
-				v++;
-			}
-#endif
-
-			// find the next surface
-			surf = (mdxmSurface_t *)( (byte *)surf + surf->ofsEnd );
-		}
-
-		// find the next LOD
-		lod = (mdxmLOD_t *)( (byte *)lod + lod->ofsEnd );
-	}
-
-	return qtrue;
-}
-
-/*
-====================
-R_RegisterMDX_Server
-====================
-*/
-qhandle_t R_RegisterMDX_Server(const char *name, model_t *mod)
-{
-	unsigned	*buf;
-	int			lod;
-	int			ident;
-	qboolean	loaded = qfalse;
-	int			numLoaded;
-	char filename[MAX_QPATH], namebuf[MAX_QPATH+20];
-	char *fext, defex[] = "md3";
-
-	numLoaded = 0;
-
-	strcpy(filename, name);
-
-	fext = strchr(filename, '.');
-	if(!fext)
-		fext = defex;
-	else
-	{
-		*fext = '\0';
-		fext++;
-	}
-
-	for (lod = MD3_MAX_LODS - 1 ; lod >= 0 ; lod--)
-	{
-		if(lod)
-			Com_sprintf(namebuf, sizeof(namebuf), "%s_%d.%s", filename, lod, fext);
-		else
-			Com_sprintf(namebuf, sizeof(namebuf), "%s.%s", filename, fext);
-
-		qboolean bAlreadyCached = qfalse;
-		if( !CModelCache->LoadFile( namebuf, (void**)&buf, &bAlreadyCached ) )
-			continue;
-
-		ident = *(unsigned *)buf;
-		if( !bAlreadyCached )
-			LL(ident);
-
-		switch(ident)
-		{
-			case MDXA_IDENT:
-				loaded = R_LoadMDXA_Server(mod, buf, namebuf, bAlreadyCached);
-				break;
-			case MDXM_IDENT:
-				loaded = R_LoadMDXM_Server(mod, buf, namebuf, bAlreadyCached);
-				break;
-			default:
-				//ri.Printf(PRINT_WARNING, "R_RegisterMDX_Server: unknown ident for %s\n", name);
-				break;
-		}
-
-		if(loaded)
-		{
-			mod->numLods++;
-			numLoaded++;
-		}
-		else
-			break;
-	}
-
-	if(numLoaded)
-	{
-		// duplicate into higher lod spots that weren't
-		// loaded, in case the user changes r_lodbias on the fly
-		for(lod--; lod >= 0; lod--)
-		{
-			mod->numLods++;
-			mod->data.mdv[lod] = mod->data.mdv[lod + 1];
-		}
-
-		return mod->index;
-	}
-
-/*#ifdef _DEBUG
-	ri.Printf(PRINT_WARNING,"R_RegisterMDX_Server: couldn't load %s\n", name);
-#endif*/
-
-	mod->type = MOD_BAD;
-	return 0;
-}
-
-// Note that the ordering indicates the order of preference used
-// when there are multiple models of different formats available
-static modelExtToLoaderMap_t serverModelLoaders[ ] =
-{
-	/*
-	Ghoul 2 Insert Start
-	*/
-	{ "glm", R_RegisterMDX_Server },
-	{ "gla", R_RegisterMDX_Server },
-	/*
-	Ghoul 2 Insert End
-	*/
-};
-
-static int numServerModelLoaders = ARRAY_LEN(serverModelLoaders);
-
-qhandle_t RE_RegisterServerModel( const char *name ) {
-	model_t		*mod;
-	qhandle_t	hModel;
-	int			i;
-	char		localName[ MAX_QPATH ];
-	const char	*ext;
-
-	if (!r_noServerGhoul2)
-	{ //keep it from choking when it gets to these checks in the g2 code. Registering all r_ cvars for the server would be a Bad Thing though.
-		r_noServerGhoul2 = ri.Cvar_Get( "r_noserverghoul2", "0", 0, "");
-	}
-
-	if ( !name || !name[0] ) {
-		return 0;
-	}
-
-	if ( strlen( name ) >= MAX_QPATH ) {
-		return 0;
-	}
-
-	// search the currently loaded models
-	if( ( hModel = CModelCache->GetModelHandle( name ) ) != -1 )
-		return hModel;
-
-	if ( name[0] == '*' )
-	{
-		if ( strcmp (name, "*default.gla") != 0 )
-		{
-			return 0;
-		}
-	}
-
-	// allocate a new model_t
-	if ( ( mod = R_AllocModel() ) == NULL ) {
-		ri.Printf( PRINT_WARNING, "RE_RegisterModel: R_AllocModel() failed for '%s'\n", name);
-		return 0;
-	}
-
-	// only set the name after the model has been successfully loaded
-	Q_strncpyz( mod->name, name, sizeof( mod->name ) );
-
-	mod->type = MOD_BAD;
-	mod->numLods = 0;
-
-	//
-	// load the files
-	//
-	Q_strncpyz( localName, name, MAX_QPATH );
-
-	ext = COM_GetExtension( localName );
-
-	if( *ext )
-	{
-		// Look for the correct loader and use it
-		for( i = 0; i < numServerModelLoaders; i++ )
-		{
-			if( !Q_stricmp( ext, serverModelLoaders[ i ].ext ) )
-			{
-				// Load
-				hModel = serverModelLoaders[ i ].ModelLoader( localName, mod );
-				break;
-			}
-		}
-
-		// A loader was found
-		if( i < numServerModelLoaders )
-		{
-			if( hModel )
-			{
-				// Something loaded
-				CModelCache->InsertModelHandle( name, hModel );
-				return mod->index;
-			}
-		}
-	}
-
-	CModelCache->InsertModelHandle( name, hModel );
-	return hModel;
-}
-
-/*
-====================
-RE_RegisterModel
-
-Loads in a model for the given name
-
-Zero will be returned if the model fails to load.
-An entry will be retained for failed models as an
-optimization to prevent disk rescanning if they are
-asked for again.
-====================
-*/
-static qhandle_t RE_RegisterModel_Actual( const char *name ) {
-	model_t		*mod;
+static qhandle_t RE_RegisterModel_Actual( const char *name ) {	model_t		*mod;
 	qhandle_t	hModel;
 	qboolean	orgNameFailed = qfalse;
 	int			orgLoader = -1;
@@ -940,10 +388,10 @@ static qboolean R_LoadMD3 ( model_t *mod, int lod, void *buffer, const char *mod
 	size = LittleLong(md3Model->ofsEnd);
 
 	mod->dataSize += size;
-	//mdvModel = mod->mdv[lod] = (mdvModel_t *)ri.Hunk_Alloc(sizeof(mdvModel_t), h_low);
+	//mdvModel = mod->mdv[lod] = (mdvModel_t *)R_Hunk_Alloc(sizeof(mdvModel_t), qtrue);
 	qboolean bAlreadyFound = qfalse;
 	md3Model = (md3Header_t *)CModelCache->Allocate(size, buffer, mod_name, &bAlreadyFound, TAG_MODEL_MD3);
-	mdvModel = mod->data.mdv[lod] = (mdvModel_t *)ri.Hunk_Alloc(sizeof(*mdvModel), h_low);
+	mdvModel = mod->data.mdv[lod] = (mdvModel_t *)R_Hunk_Alloc(sizeof(*mdvModel), qtrue);
 
 //  Com_Memcpy(mod->md3[lod], buffer, LittleLong(md3Model->ofsEnd));
 	if( !bAlreadyFound )
@@ -979,7 +427,7 @@ static qboolean R_LoadMD3 ( model_t *mod, int lod, void *buffer, const char *mod
 
 	// swap all the frames
 	mdvModel->numFrames = md3Model->numFrames;
-	mdvModel->frames = frame = (mdvFrame_t *)ri.Hunk_Alloc(sizeof(*frame) * md3Model->numFrames, h_low);
+	mdvModel->frames = frame = (mdvFrame_t *)R_Hunk_Alloc(sizeof(*frame) * md3Model->numFrames, qtrue);
 
 	md3Frame = (md3Frame_t *) ((byte *) md3Model + md3Model->ofsFrames);
 	for(i = 0; i < md3Model->numFrames; i++, frame++, md3Frame++)
@@ -995,7 +443,7 @@ static qboolean R_LoadMD3 ( model_t *mod, int lod, void *buffer, const char *mod
 
 	// swap all the tags
 	mdvModel->numTags = md3Model->numTags;
-	mdvModel->tags = tag = (mdvTag_t *)ri.Hunk_Alloc(sizeof(*tag) * (md3Model->numTags * md3Model->numFrames), h_low);
+	mdvModel->tags = tag = (mdvTag_t *)R_Hunk_Alloc(sizeof(*tag) * (md3Model->numTags * md3Model->numFrames), qtrue);
 
 	md3Tag = (md3Tag_t *) ((byte *) md3Model + md3Model->ofsTags);
 	for(i = 0; i < md3Model->numTags * md3Model->numFrames; i++, tag++, md3Tag++)
@@ -1010,7 +458,7 @@ static qboolean R_LoadMD3 ( model_t *mod, int lod, void *buffer, const char *mod
 	}
 
 
-	mdvModel->tagNames = tagName = (mdvTagName_t *)ri.Hunk_Alloc(sizeof(*tagName) * (md3Model->numTags), h_low);
+	mdvModel->tagNames = tagName = (mdvTagName_t *)R_Hunk_Alloc(sizeof(*tagName) * (md3Model->numTags), qtrue);
 
 	md3Tag = (md3Tag_t *) ((byte *) md3Model + md3Model->ofsTags);
 	for(i = 0; i < md3Model->numTags; i++, tagName++, md3Tag++)
@@ -1020,7 +468,7 @@ static qboolean R_LoadMD3 ( model_t *mod, int lod, void *buffer, const char *mod
 
 	// swap all the surfaces
 	mdvModel->numSurfaces = md3Model->numSurfaces;
-	mdvModel->surfaces = surf = (mdvSurface_t *)ri.Hunk_Alloc(sizeof(*surf) * md3Model->numSurfaces, h_low);
+	mdvModel->surfaces = surf = (mdvSurface_t *)R_Hunk_Alloc(sizeof(*surf) * md3Model->numSurfaces, qtrue);
 
 	md3Surf = (md3Surface_t *) ((byte *) md3Model + md3Model->ofsSurfaces);
 	for(i = 0; i < md3Model->numSurfaces; i++)
@@ -1074,7 +522,7 @@ static qboolean R_LoadMD3 ( model_t *mod, int lod, void *buffer, const char *mod
 
 		// register the shaders
 		surf->numShaderIndexes = md3Surf->numShaders;
-		surf->shaderIndexes = shaderIndex = (int *)ri.Hunk_Alloc(sizeof(*shaderIndex) * md3Surf->numShaders, h_low);
+		surf->shaderIndexes = shaderIndex = (int *)R_Hunk_Alloc(sizeof(*shaderIndex) * md3Surf->numShaders, qtrue);
 
 		md3Shader = (md3Shader_t *) ((byte *) md3Surf + md3Surf->ofsShaders);
 		for(j = 0; j < md3Surf->numShaders; j++, shaderIndex++, md3Shader++)
@@ -1094,7 +542,7 @@ static qboolean R_LoadMD3 ( model_t *mod, int lod, void *buffer, const char *mod
 
 		// swap all the triangles
 		surf->numIndexes = md3Surf->numTriangles * 3;
-		surf->indexes = tri = (glIndex_t *)ri.Hunk_Alloc(sizeof(*tri) * 3 * md3Surf->numTriangles, h_low);
+		surf->indexes = tri = (glIndex_t *)R_Hunk_Alloc(sizeof(*tri) * 3 * md3Surf->numTriangles, qtrue);
 
 		md3Tri = (md3Triangle_t *) ((byte *) md3Surf + md3Surf->ofsTriangles);
 		for(j = 0; j < md3Surf->numTriangles; j++, tri += 3, md3Tri++)
@@ -1106,7 +554,7 @@ static qboolean R_LoadMD3 ( model_t *mod, int lod, void *buffer, const char *mod
 
 		// swap all the XyzNormals
 		surf->numVerts = md3Surf->numVerts;
-		surf->verts = v = (mdvVertex_t *)ri.Hunk_Alloc(sizeof(*v) * (md3Surf->numVerts * md3Surf->numFrames), h_low);
+		surf->verts = v = (mdvVertex_t *)R_Hunk_Alloc(sizeof(*v) * (md3Surf->numVerts * md3Surf->numFrames), qtrue);
 
 		md3xyz = (md3XyzNormal_t *) ((byte *) md3Surf + md3Surf->ofsXyzNormals);
 		for(j = 0; j < md3Surf->numVerts * md3Surf->numFrames; j++, md3xyz++, v++)
@@ -1135,7 +583,7 @@ static qboolean R_LoadMD3 ( model_t *mod, int lod, void *buffer, const char *mod
 		}
 
 		// swap all the ST
-		surf->st = st = (mdvSt_t *)ri.Hunk_Alloc(sizeof(*st) * md3Surf->numVerts, h_low);
+		surf->st = st = (mdvSt_t *)R_Hunk_Alloc(sizeof(*st) * md3Surf->numVerts, qtrue);
 
 		md3st = (md3St_t *) ((byte *) md3Surf + md3Surf->ofsSt);
 		for(j = 0; j < md3Surf->numVerts; j++, md3st++, st++)

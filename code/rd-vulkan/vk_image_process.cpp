@@ -312,7 +312,7 @@ void R_MipMap2( unsigned * const out, unsigned * const in, int inWidth, int inHe
     outHeight = inHeight >> 1;
 
     if (out == in)
-        temp = (unsigned int*)ri.Hunk_AllocateTempMemory(outWidth * outHeight * 4);
+        temp = (unsigned int*)Hunk_AllocateTempMemory(outWidth * outHeight * 4);
     else
         temp = out;
 
@@ -350,7 +350,7 @@ void R_MipMap2( unsigned * const out, unsigned * const in, int inWidth, int inHe
 
     if (out == in) {
         Com_Memcpy(out, temp, outWidth * outHeight * 4);
-        ri.Hunk_FreeTempMemory(temp);
+        Hunk_FreeTempMemory(temp);
     }
 }
 

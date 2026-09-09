@@ -435,3 +435,28 @@ void R_AddMD3Surfaces( trRefEntity_t *ent ) {
 	}
 
 }
+
+/*
+=================
+RE_GetModelBounds
+
+  SP refexport entry point: returns the bounds of the current model
+  (qhandle_t)hModel and (int)frame need to be set
+=================
+*/
+void RE_GetModelBounds(refEntity_t *refEnt, vec3_t bounds1, vec3_t bounds2)
+{
+	mdvModel_t	*mdv;
+	model_t		*model;
+
+	assert(refEnt);
+
+	model = R_GetModelByHandle( refEnt->hModel );
+	assert(model);
+	mdv = model->data.mdv[0];
+	assert(mdv);
+	assert( refEnt->frame >= 0 && refEnt->frame < mdv->numFrames );
+
+	VectorCopy( mdv->frames[refEnt->frame].bounds[0], bounds1 );
+	VectorCopy( mdv->frames[refEnt->frame].bounds[1], bounds2 );
+}

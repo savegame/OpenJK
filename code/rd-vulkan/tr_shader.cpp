@@ -81,9 +81,9 @@ const int lightmapsFullBright[MAXLIGHTMAPS] =
 const byte stylesDefault[MAXLIGHTMAPS] =
 {
 	LS_NORMAL,
-	LS_LSNONE,
-	LS_LSNONE,
-	LS_LSNONE
+	LS_NONE,
+	LS_NONE,
+	LS_NONE
 };
 
 void setDefaultShader( void )
@@ -519,7 +519,7 @@ static bool ParseSurfaceSprites( const char *_text, shaderStage_t *stage )
 
 	if (!stage->ss)
 	{
-		stage->ss = (surfaceSprite_t*)Hunk_Alloc(sizeof(surfaceSprite_t), h_low);
+		stage->ss = (surfaceSprite_t*)Hunk_Alloc(sizeof(surfaceSprite_t), qtrue);
 	}
 
 	// These are all set by the command lines.
@@ -582,7 +582,7 @@ static bool ParseSurfaceSpritesOptional( const char *param, const char *_text, s
 
 	if (!stage->ss)
 	{
-		stage->ss = (surfaceSprite_t*)Hunk_Alloc(sizeof(surfaceSprite_t), h_low);
+		stage->ss = (surfaceSprite_t*)Hunk_Alloc(sizeof(surfaceSprite_t), qtrue);
 	}
 	//
 	// fademax
@@ -1401,7 +1401,7 @@ static qboolean ParseStage(shaderStage_t *stage, const char **text)
 				vk_debug("WARNING: missing parameter for 'videoMap' keyword in shader '%s'\n", shader.name);
 				return qfalse;
 			}
-			handle = ri.CIN_PlayCinematic(token, 0, 0, 256, 256, (CIN_loop | CIN_silent | CIN_shader));
+			handle = ri.CIN_PlayCinematic(token, 0, 0, 256, 256, (CIN_loop | CIN_silent | CIN_shader), NULL);
 			if (handle != -1) {
 				if (!tr.scratchImage[handle]) {
 					tr.scratchImage[handle] = R_CreateImage(va("*scratch%i", handle), NULL, 256, 256, 
@@ -1699,7 +1699,7 @@ static qboolean ParseStage(shaderStage_t *stage, const char **text)
 			}
 			else if (!Q_stricmp(token, "vector"))
 			{
-				stage->bundle[0].tcGenVectors = (vec3_t*)Hunk_Alloc(2 * sizeof(vec3_t), h_low);
+				stage->bundle[0].tcGenVectors = (vec3_t*)Hunk_Alloc(2 * sizeof(vec3_t), qtrue);
 				ParseVector(text, 3, stage->bundle[0].tcGenVectors[0]);
 				ParseVector(text, 3, stage->bundle[0].tcGenVectors[1]);
 
@@ -1914,7 +1914,7 @@ static void ParseDeform( const char **text ) {
 		return;
 	}
 
-	shader.deforms[shader.numDeforms] = (deformStage_t*)Hunk_Alloc(sizeof(deformStage_t), h_low);
+	shader.deforms[shader.numDeforms] = (deformStage_t*)Hunk_Alloc(sizeof(deformStage_t), qtrue);
 
 	ds = shader.deforms[shader.numDeforms];
 	shader.numDeforms++;
@@ -2059,7 +2059,7 @@ static void ParseSkyParms( const char **text ) {
 		imgFlags |= IMGFLAG_NO_COMPRESSION;
 	}
 
-	shader.sky = (skyParms_t*)Hunk_Alloc(sizeof(skyParms_t), h_low);
+	shader.sky = (skyParms_t*)Hunk_Alloc(sizeof(skyParms_t), qtrue);
 
 	// outerbox
 	token = COM_ParseExt(text, qfalse);
@@ -2222,7 +2222,7 @@ static const char *FindShaderInShaderText( const char *shadername ) {
 		}
 		else {
 			// skip the definition
-			SkipBracedSection(&p, 0);
+			SkipBracedSection(&p);
 		}
 	}
 	return NULL;
@@ -2592,7 +2592,7 @@ static qboolean ParseShader( const char **text )
 		// fogParms
 		else if (!Q_stricmp(token, "fogParms"))
 		{
-			shader.fogParms = (fogParms_t*)Hunk_Alloc(sizeof(fogParms_t), h_low);
+			shader.fogParms = (fogParms_t*)Hunk_Alloc(sizeof(fogParms_t), qtrue);
 			if (!ParseVector(text, 3, shader.fogParms->color)) {
 				return qfalse;
 			}
@@ -2956,7 +2956,10 @@ static void ScanAndLoadShaderFiles( void )
 				break;
 			}
 
-			if (!SkipBracedSection(&p, 1))
+			// SP SkipBracedSection handles the already-eaten opening brace and
+			// leaves p == NULL on EOF.
+			SkipBracedSection(&p);
+			if (!p)
 			{
 				vk_debug("WARNING: Ignoring shader file %s. Shader \"%s\" on line %d missing closing brace.\n",
 					filename, shaderName, shaderLine);
@@ -2972,7 +2975,7 @@ static void ScanAndLoadShaderFiles( void )
 	}
 
 	// build single large buffer
-	s_shaderText = (char*)ri.Hunk_Alloc(sum + numShaderFiles * 2, h_low);
+	s_shaderText = (char*)R_Hunk_Alloc(sum + numShaderFiles * 2, qtrue);
 	s_shaderText[0] = '\0';
 	textEnd = s_shaderText;
 
@@ -3013,12 +3016,12 @@ static void ScanAndLoadShaderFiles( void )
 		hash = generateHashValue(token, MAX_SHADERTEXT_HASH);
 		shaderTextHashTableSizes[hash]++;
 		size++;
-		SkipBracedSection(&p, 0);
+		SkipBracedSection(&p);
 	}
 
 	size += MAX_SHADERTEXT_HASH;
 
-	hashMem = (char*)ri.Hunk_Alloc(size * sizeof(char*), h_low);
+	hashMem = (char*)R_Hunk_Alloc(size * sizeof(char*), qtrue);
 
 	for (i = 0; i < MAX_SHADERTEXT_HASH; i++) {
 		shaderTextHashTable[i] = (const char**)hashMem;
@@ -3045,7 +3048,7 @@ static void ScanAndLoadShaderFiles( void )
 		hash = generateHashValue(token, MAX_SHADERTEXT_HASH);
 		shaderTextHashTable[hash][shaderTextHashTableSizes[hash]++] = oldp;
 
-		SkipBracedSection(&p, 0);
+		SkipBracedSection(&p);
 	}
 
 	return;
@@ -4797,7 +4800,7 @@ shader_t *GeneratePermanentShader( void )
 		return tr.defaultShader;
 	}
 
-	newShader = (shader_t*)ri.Hunk_Alloc( sizeof(shader_t), h_low );
+	newShader = (shader_t*)R_Hunk_Alloc( sizeof(shader_t), qtrue );
 
 	*newShader = shader;
 
@@ -4814,7 +4817,7 @@ shader_t *GeneratePermanentShader( void )
 		if ( !stages[i].active ) {
 			break;
 		}
-		newShader->stages[i] = (shaderStage_t*)ri.Hunk_Alloc( sizeof(stages[i]), h_low );
+		newShader->stages[i] = (shaderStage_t*)R_Hunk_Alloc( sizeof(stages[i]), qtrue );
 		*newShader->stages[i] = stages[i];
 
 		for ( b = 0; b < NUM_TEXTURE_BUNDLES; b++ )
@@ -4823,7 +4826,7 @@ shader_t *GeneratePermanentShader( void )
 			{
 				size = newShader->stages[i]->bundle[b].numTexMods * sizeof( texModInfo_t );
 				if ( size ) {
-					newShader->stages[i]->bundle[b].texMods = (texModInfo_t*)ri.Hunk_Alloc( size, h_low );
+					newShader->stages[i]->bundle[b].texMods = (texModInfo_t*)R_Hunk_Alloc( size, qtrue );
 					Com_Memcpy( newShader->stages[i]->bundle[b].texMods, stages[i].bundle[b].texMods, size );
 				}
 			} 

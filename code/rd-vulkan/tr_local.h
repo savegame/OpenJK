@@ -57,6 +57,10 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "qcommon/qfiles.h"
 #include "rd-common/tr_public.h"
 #include "rd-common/tr_common.h"
+
+#ifndef Square
+#define Square(x) ((x)*(x))
+#endif
 #include "../game/ghoul2_shared.h" // SP ghoul2 shared types (via q_shared in SP)
 
 #if defined(_WIN32)
@@ -763,6 +767,8 @@ typedef struct trRefdef_s {
 	qboolean			areamaskModified;			// qtrue if areamask changed since last scene
 
 	float				floatTime;					// tr.refdef.time / 1000.0
+
+	qboolean			doLAGoggles;				// SP: light-amp goggles active (RDF_doLAGoggles)
 
 	char				text[MAX_RENDER_STRINGS][MAX_RENDER_STRING_LENGTH];	// text messages for deform text shaders
 
@@ -2011,13 +2017,27 @@ void		RE_LoadWorldMap( const char *mapname );
 
 void		RE_SetWorldVisData( const byte *vis );
 
-qhandle_t	RE_RegisterServerModel( const char *name );
 qhandle_t	RE_RegisterModel( const char *name );
 qhandle_t	RE_RegisterSkin( const char *name );
+
+qboolean	RE_GetLighting( const vec3_t origin, vec3_t ambientLight, vec3_t directedLight, vec3_t lightDir );
+void		RE_LAGoggles( void );
+void		RE_Scissor( float x, float y, float w, float h );
+qboolean	RE_ProcessDissolve( void );
+qboolean	RE_InitDissolve( qboolean bForceCircularExtroWipe );
+void		RE_GetScreenShot( byte *buffer, int w, int h );
+byte		*RE_TempRawImage_ReadFromFile( const char *psLocalFilename, int *piWidth, int *piHeight, byte *pbReSampleBuffer, qboolean qbVertFlip );
+void		RE_TempRawImage_CleanUp( void );
+void		RE_GetModelBounds( refEntity_t *refEnt, vec3_t bounds1, vec3_t bounds2 );
 
 qboolean	R_GetEntityToken( char *buffer, int size );
 
 model_t		*R_AllocModel( void );
+
+// hunk/temp-memory shims (defined in tr_subs.cpp, routed to the SP zone)
+void		*Hunk_AllocateTempMemory( int size );
+void		Hunk_FreeTempMemory( void *buf );
+int			Hunk_MemoryRemaining( void );
 
 void    	R_Init( void );
 
@@ -2184,7 +2204,7 @@ WORLD MAP
 */
 void R_AddBrushModelSurfaces( trRefEntity_t *e );
 void R_AddWorldSurfaces( void );
-qboolean R_inPVS( const vec3_t p1, const vec3_t p2, byte *mask );
+qboolean R_inPVS( vec3_t p1, vec3_t p2 );
 
 
 /*
@@ -2274,7 +2294,7 @@ void R_InitNextFrame( void );
 
 void RE_ClearScene( void );
 void RE_AddRefEntityToScene( const refEntity_t *ent );
-void RE_AddPolyToScene( qhandle_t hShader , int numVerts, const polyVert_t *verts, int num );
+void RE_AddPolyToScene( qhandle_t hShader , int numVerts, const polyVert_t *verts );
 void RE_AddLightToScene( const vec3_t org, float intensity, float r, float g, float b );
 void RE_AddAdditiveLightToScene( const vec3_t org, float intensity, float r, float g, float b );
 void RE_RenderScene( const refdef_t *fd );
@@ -2494,6 +2514,11 @@ typedef struct
 	int			commandId;
 } clearColorCommand_t;
 
+typedef struct scissorCommand_s {
+	int			commandId;
+	float		x, y, w, h;
+} scissorCommand_t;
+
 
 typedef enum {
 	RC_END_OF_LIST = 0,
@@ -2503,6 +2528,7 @@ typedef enum {
 	RC_ROTATE_PIC2,
 	RC_DRAW_SURFS,
 	RC_DRAW_BUFFER,
+	RC_SCISSOR,
 	RC_SWAP_BUFFERS,
 	RC_WORLD_EFFECTS,
 	RC_AUTO_MAP,

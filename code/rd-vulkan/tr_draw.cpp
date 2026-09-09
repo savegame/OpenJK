@@ -214,6 +214,8 @@ static byte *RE_ReSample(byte *pbLoadedPic,			int iLoadedWidth,	int iLoadedHeigh
 //
 byte* pbLoadedPic = NULL;
 
+void RE_TempRawImage_CleanUp(void);
+
 byte* RE_TempRawImage_ReadFromFile(const char *psLocalFilename, int *piWidth, int *piHeight, byte *pbReSampleBuffer, qboolean qbVertFlip)
 {
 	RE_TempRawImage_CleanUp();	// jic

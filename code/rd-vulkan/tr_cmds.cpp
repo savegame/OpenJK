@@ -330,6 +330,40 @@ void RE_RenderWorldEffects( void )
 	cmd->commandId = RC_WORLD_EFFECTS;
 }
 
+void RE_LAGoggles( void )
+{
+	tr.refdef.rdflags |= (RDF_doLAGoggles|RDF_doFullbright);
+	tr.refdef.doLAGoggles = qtrue;
+
+	fog_t		*fog = &tr.world->fogs[tr.world->numfogs];
+
+	fog->parms.color[0] = 0.75f;
+	fog->parms.color[1] = 0.42f + Q_flrand(0.0f, 1.0f) * 0.025f;
+	fog->parms.color[2] = 0.07f;
+	fog->parms.depthForOpaque = 10000;
+	fog->colorInt = ColorBytes4(fog->parms.color[0], fog->parms.color[1], fog->parms.color[2], 1.0f);
+	fog->tcScale = 2.0f / ( fog->parms.depthForOpaque * (1.0f + cos( tr.refdef.floatTime) * 0.1f));
+}
+
+void RE_Scissor ( float x, float y, float w, float h)
+{
+	scissorCommand_t	*cmd;
+
+	if (!tr.registered) {
+		return;
+	}
+
+	cmd = (scissorCommand_t *) R_GetCommandBuffer( sizeof( *cmd ) );
+	if ( !cmd ) {
+		return;
+	}
+	cmd->commandId = RC_SCISSOR;
+	cmd->x = x;
+	cmd->y = y;
+	cmd->w = w;
+	cmd->h = h;
+}
+
 void RE_RenderAutoMap( void )
 {
 	drawBufferCommand_t	*cmd;

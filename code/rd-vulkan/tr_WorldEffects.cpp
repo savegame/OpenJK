@@ -1032,13 +1032,11 @@ public:
 
 		// Create The Image
 		//------------------
-		mImage = R_FindImageFile(texturePath, qfalse, qfalse, qfalse, GL_CLAMP);
+		mImage = R_FindImageFile(texturePath, IMGFLAG_CLAMPTOEDGE);
 		if (!mImage)
 		{
 			Com_Error(ERR_DROP, "CParticleCloud: Could not texture %s", texturePath);
 		}
-
-		GL_Bind(mImage);
 
 
 
@@ -1428,131 +1426,10 @@ public:
 	////////////////////////////////////////////////////////////////////////////////////
 	void		Render()
 	{
-		WFXParticle*	part=0;
-		int			particleNum;
-		CVec3		partDirection;
-
-
-		// Set The GL State And Image Binding
-		//------------------------------------
-		GL_State((mBlendMode==0)?(GLS_ALPHA):(GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE));
-		GL_Bind(mImage);
-
-
-		// Enable And Disable Things
-		//---------------------------
-		qglEnable(GL_TEXTURE_2D);
-		qglDisable(GL_CULL_FACE);
-
-		qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, (mFilterMode==0)?(GL_LINEAR):(GL_NEAREST));
-		qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, (mFilterMode==0)?(GL_LINEAR):(GL_NEAREST));
-
-
-		// Setup Matrix Mode And Translation
-		//-----------------------------------
-		qglMatrixMode(GL_MODELVIEW);
-		qglPushMatrix();
-
-
-		// Begin
-		//-------
-		qglBegin(mGLModeEnum);
-		for (particleNum=0; particleNum<mParticleCount; particleNum++)
-		{
-			part = &(mParticles[particleNum]);
-			if (!part->mFlags.get_bit(WFXParticle::FLAG_RENDER))
-			{
-				continue;
-			}
-
-			// If Oriented With Velocity, We Want To Calculate Vertx Offsets Differently For Each Particle
-			//---------------------------------------------------------------------------------------------
-			if (mOrientWithVelocity)
-			{
-				partDirection = part->mVelocity;
-				VectorNormalize(partDirection.v);
-				mCameraDown = partDirection;
-				mCameraDown *= (mHeight * -1);
-				if (mVertexCount==4)
-				{
-		 			mCameraLeftPlusUp  = (mCameraLeft - mCameraDown);
-					mCameraLeftMinusUp = (mCameraLeft + mCameraDown);
-				}
-				else
-				{
-					mCameraLeftPlusUp  = (mCameraDown + mCameraLeft);
-				}
-			}
-
-			// Blend Mode Zero -> Apply Alpha Just To Alpha Channel
-			//------------------------------------------------------
-			if (mBlendMode==0)
-			{
-				qglColor4f(mColor[0], mColor[1], mColor[2], part->mAlpha);
-			}
-
-			// Otherwise Apply Alpha To All Channels
-			//---------------------------------------
-			else
-			{
-				qglColor4f(mColor[0]*part->mAlpha, mColor[1]*part->mAlpha, mColor[2]*part->mAlpha, mColor[3]*part->mAlpha);
-			}
-
-
-			// Render A Triangle
-			//-------------------
-			if (mVertexCount==3)
-			{
- 				qglTexCoord2f(1.0, 0.0);
-				qglVertex3f(part->mPosition[0],
-							part->mPosition[1],
-							part->mPosition[2]);
-
-				qglTexCoord2f(0.0, 1.0);
-				qglVertex3f(part->mPosition[0] + mCameraLeft[0],
-							part->mPosition[1] + mCameraLeft[1],
-							part->mPosition[2] + mCameraLeft[2]);
-
-				qglTexCoord2f(0.0, 0.0);
-				qglVertex3f(part->mPosition[0] + mCameraLeftPlusUp[0],
-							part->mPosition[1] + mCameraLeftPlusUp[1],
-							part->mPosition[2] + mCameraLeftPlusUp[2]);
-			}
-
-			// Render A Quad
-			//---------------
-			else
-			{
-				// Left bottom.
-				qglTexCoord2f( 0.0, 0.0 );
-				qglVertex3f(part->mPosition[0] - mCameraLeftMinusUp[0],
-							part->mPosition[1] - mCameraLeftMinusUp[1],
-							part->mPosition[2] - mCameraLeftMinusUp[2] );
-
-				// Right bottom.
-				qglTexCoord2f( 1.0, 0.0 );
-				qglVertex3f(part->mPosition[0] - mCameraLeftPlusUp[0],
-							part->mPosition[1] - mCameraLeftPlusUp[1],
-							part->mPosition[2] - mCameraLeftPlusUp[2] );
-
-				// Right top.
-				qglTexCoord2f( 1.0, 1.0 );
-				qglVertex3f(part->mPosition[0] + mCameraLeftMinusUp[0],
-							part->mPosition[1] + mCameraLeftMinusUp[1],
-							part->mPosition[2] + mCameraLeftMinusUp[2] );
-
-				// Left top.
-				qglTexCoord2f( 0.0, 1.0 );
-				qglVertex3f(part->mPosition[0] + mCameraLeftPlusUp[0],
-							part->mPosition[1] + mCameraLeftPlusUp[1],
-							part->mPosition[2] + mCameraLeftPlusUp[2] );
-			}
-		}
-		qglEnd();
-
-		qglEnable(GL_CULL_FACE);
-		qglPopMatrix();
-
+		// TODO: weather particles were drawn with immediate mode GL
+		// (qglBegin/qglVertex + fixed-function state); the CPU particle
+		// state in this class is preserved, emission moves into the tess
+		// buffer as indexed triangles (like rd-gles3).
 		mParticlesRendered += mParticleCountRender;
 	}
 };
@@ -1602,8 +1479,6 @@ void RB_RenderWorldEffects(void)
 	}
 
 	SetViewportAndScissor();
-	qglMatrixMode(GL_MODELVIEW);
-	qglLoadMatrixf(backEnd.viewParms.world.modelMatrix);
 
 
 	// Calculate Elapsed Time For Scale Purposes

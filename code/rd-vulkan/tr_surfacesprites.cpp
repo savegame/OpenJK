@@ -193,7 +193,7 @@ static void R_SurfaceSpriteFrameUpdate(void)
 		curWeatherAmount = r_surfaceWeather->value;
 	}
 
-	if (R_GetWindSpeed(targetspeed))
+	if (R_GetWindSpeed(targetspeed, NULL))
 	{	// We successfully got a speed from the rain system.
 		// Set the windgust to 5, since that looks pretty good.
 		targetspeed *= 0.3f;
@@ -233,7 +233,7 @@ static void R_SurfaceSpriteFrameUpdate(void)
 	}
 
 	// See if there is a weather system that will tell us a windspeed.
-	if (R_GetWindVector(retwindvec))
+	if (R_GetWindVector(retwindvec, NULL))
 	{
 		retwindvec[2] = 0;
 		VectorScale(retwindvec, -1.0f, retwindvec);

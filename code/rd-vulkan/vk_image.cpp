@@ -86,7 +86,7 @@ static byte* R_ImageScratchAlloc( imageScratchBuffer_t *scratch, size_t size )
 		if ( scratch->buffer )
 			ri.Z_Free(scratch->buffer);
 
-		scratch->buffer = (byte*)Z_Malloc( size, TAG_TEMP_IMAGE );
+		scratch->buffer = (byte*)R_Malloc( size, TAG_TEMP_WORKSPACE, qfalse );
 		scratch->size = size;
 	}
 
@@ -1392,7 +1392,7 @@ image_t *R_CreateImage( const char *name, byte *pic, int width, int height, imgF
 #endif
 
     //image = (image_t*)Z_Malloc(sizeof(*image) + namelen + namelen2, TAG_IMAGE_T, qtrue);
-    //image = (image_t*)ri.Hunk_Alloc(sizeof(*image) + namelen, h_low);
+    //image = (image_t*)R_Hunk_Alloc(sizeof(*image) + namelen, qtrue);
 	image = (image_t*)Z_Malloc(sizeof(*image) + namelen, TAG_IMAGE_T);
 	Com_Memset(image, 0, sizeof(*image) + namelen);
 
@@ -1734,7 +1734,7 @@ static void R_CreateFogImage( void )
     }
 
     tr.fogImage = R_CreateImage("*fog", data, FOG_S, FOG_T, IMGFLAG_CLAMPTOEDGE);
-    ri.Hunk_FreeTempMemory(data);
+    Hunk_FreeTempMemory(data);
 }
 
 /*

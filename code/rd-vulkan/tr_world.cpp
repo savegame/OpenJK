@@ -146,89 +146,7 @@ static qboolean	R_CullSurface( surfaceType_t *surface, shader_t *shader ) {
 
 	sface = ( srfSurfaceFace_t * ) surface;
 
-	if (r_cullRoofFaces->integer)
-	{ //Very slow, but this is only intended for taking shots for automap images.
-		if (sface->plane.normal[2] > 0.0f &&
-			sface->numPoints > 0)
-		{ //it's facing up I guess
-			static int i;
-			static trace_t tr;
-			static vec3_t basePoint;
-			static vec3_t endPoint;
-			static vec3_t nNormal;
-			static vec3_t v;
-
-			//The fact that this point is in the middle of the array has no relation to the
-			//orientation in the surface outline.
-			basePoint[0] = sface->points[sface->numPoints/2][0];
-			basePoint[1] = sface->points[sface->numPoints/2][1];
-			basePoint[2] = sface->points[sface->numPoints/2][2];
-			basePoint[2] += 2.0f;
-
-			//the endpoint will be 8192 units from the chosen point
-			//in the direction of the surface normal
-
-			//just go straight up I guess, for now (slight hack)
-			VectorSet(nNormal, 0.0f, 0.0f, 1.0f);
-			VectorMA(basePoint, 8192.0f, nNormal, endPoint);
-
-			ri.CM_BoxTrace(&tr, basePoint, endPoint, NULL, NULL, 0, (CONTENTS_SOLID|CONTENTS_TERRAIN), qfalse);
-
-			if (!tr.startsolid &&
-				!tr.allsolid &&
-				(tr.fraction == 1.0f || (tr.surfaceFlags & SURF_NOIMPACT)))
-			{ //either hit nothing or sky, so this surface is near the top of the level I guess. Or the floor of a really tall room, but if that's the case we're just screwed.
-				VectorSubtract(basePoint, tr.endpos, v);
-				if (tr.fraction == 1.0f || VectorLength(v) < r_roofCullCeilDist->value)
-				{ //ignore it if it's not close to the top, unless it just hit nothing
-					//Let's try to dig back into the brush based on the negative direction of the plane,
-					//and if we pop out on the other side we'll see if it's ground or not.
-					i = 4;
-					VectorCopy(sface->plane.normal, nNormal);
-					VectorInverse(nNormal);
-
-					while (i < 4096)
-					{
-						VectorMA(basePoint, i, nNormal, endPoint);
-						ri.CM_BoxTrace(&tr, endPoint, endPoint, NULL, NULL, 0, (CONTENTS_SOLID|CONTENTS_TERRAIN), qfalse);
-						if (!tr.startsolid &&
-							!tr.allsolid &&
-							tr.fraction == 1.0f)
-						{ //in the clear
-							break;
-						}
-						i++;
-					}
-					if (i < 4096)
-					{ //Make sure we got into clearance
-						VectorCopy(endPoint, basePoint);
-						basePoint[2] -= 2.0f;
-
-						//just go straight down I guess, for now (slight hack)
-						VectorSet(nNormal, 0.0f, 0.0f, -1.0f);
-						VectorMA(basePoint, 4096.0f, nNormal, endPoint);
-
-						//trace a second time from the clear point in the inverse normal direction of the surface.
-						//If we hit something within a set amount of units, we will assume it's a bridge type object
-						//and leave it to be drawn. Otherwise we will assume it is a roof or other obstruction and
-						//cull it out.
-						ri.CM_BoxTrace(&tr, basePoint, endPoint, NULL, NULL, 0, (CONTENTS_SOLID|CONTENTS_TERRAIN), qfalse);
-
-						if (!tr.startsolid &&
-							!tr.allsolid &&
-							(tr.fraction != 1.0f && !(tr.surfaceFlags & SURF_NOIMPACT)))
-						{ //if we hit nothing or a noimpact going down then this is probably "ground".
-							VectorSubtract(basePoint, tr.endpos, endPoint);
-							if (VectorLength(endPoint) > r_roofCullCeilDist->value)
-							{ //128 (by default) is our maximum tolerance, above that will be removed
-								return qtrue;
-							}
-						}
-					}
-				}
-			}
-		}
-	}
+	// r_cullRoofFaces block removed: SP refimport has no CM_BoxTrace (rd-vanilla has no such culling).
 
 	d = DotProduct (tr.ori.viewOrigin, sface->plane.normal);
 
@@ -1400,21 +1318,17 @@ static const byte *R_ClusterPVS ( int cluster ) {
 R_inPVS
 =================
 */
-qboolean R_inPVS( const vec3_t p1, const vec3_t p2, byte *mask ) {
-	int		leafnum;
-	int		cluster;
+qboolean R_inPVS( vec3_t p1, vec3_t p2 ) {
+	mnode_t *leaf;
+	byte	*vis;
 
-	leafnum = ri.CM_PointLeafnum (p1);
-	cluster = ri.CM_LeafCluster (leafnum);
+	leaf = R_PointInLeaf( p1 );
+	vis = ri.CM_ClusterPVS( leaf->cluster );
+	leaf = R_PointInLeaf( p2 );
 
-	//agh, the damn snapshot mask doesn't work for this
-	mask = (byte *) ri.CM_ClusterPVS (cluster);
-
-	leafnum = ri.CM_PointLeafnum (p2);
-	cluster = ri.CM_LeafCluster (leafnum);
-	if ( mask && (!(mask[cluster>>3] & (1<<(cluster&7)) ) ) )
+	if ( !(vis[leaf->cluster>>3] & (1<<(leaf->cluster&7))) ) {
 		return qfalse;
-
+	}
 	return qtrue;
 }
 

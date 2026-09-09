@@ -80,7 +80,6 @@ if(BuildSPRdVulkan)
 		"${SPDir}/rd-vulkan/tr_subs.cpp"
 		"${SPDir}/rd-vulkan/tr_surface.cpp"
 		"${SPDir}/rd-vulkan/tr_surfacesprites.cpp"
-		"${SPDir}/rd-vulkan/tr_terrain.cpp"
 		"${SPDir}/rd-vulkan/tr_world.cpp"
 		"${SPDir}/rd-vulkan/tr_WorldEffects.cpp"
 		"${SPDir}/rd-vulkan/tr_WorldEffects.h"

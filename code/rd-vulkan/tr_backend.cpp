@@ -555,53 +555,7 @@ static void RB_RenderLitSurfList( dlight_t *dl ) {
 }
 #endif // USE_PMLIGHT
 
-/*
-=============
-RE_StretchRaw
-
-FIXME: not exactly backend
-Stretches a raw 32 bit power of 2 bitmap image over the given screen rectangle.
-Used for cinematics.
-=============
-*/
-void RE_StretchRaw ( int x, int y, int w, int h, int cols, int rows, const byte *data, int client, qboolean dirty )
-{
-	int			i, j;
-	int			start, end;
-
-	if (!tr.registered) {
-		return;
-	}
-
-	start = 0;
-	if (r_speeds->integer) {
-		start = ri.Milliseconds() * ri.Cvar_VariableValue("timescale");
-	}
-
-	// make sure rows and cols are powers of 2
-	for (i = 0; (1 << i) < cols; i++)
-	{
-		;
-	}
-	for (j = 0; (1 << j) < rows; j++)
-	{
-		;
-	}
-
-	if ((1 << i) != cols || (1 << j) != rows) {
-		Com_Error(ERR_DROP, "Draw_StretchRaw: size not a power of 2: %i by %i", cols, rows);
-	}
-
-	RE_UploadCinematic( cols, rows, (byte*)data, client, dirty );
-
-	if (r_speeds->integer) {
-		end = ri.Milliseconds() * ri.Cvar_VariableValue("timescale");
-		ri.Printf(PRINT_ALL, "RE_UploadCinematic( %i, %i ): %i msec\n", cols, rows, end - start);
-	}
-
-	tr.cinematicShader->stages[0]->bundle[0].image[0] = tr.scratchImage[client];
-	RE_StretchPic(x, y, w, h, 0.5f / cols, 0.5f / rows, 1.0f - 0.5f / cols, 1.0f - 0.5 / rows, tr.cinematicShader->index);
-}
+/* RE_StretchRaw is defined in tr_draw.cpp (SP location, as in rd-vanilla) */
 
 /*
 =============
@@ -1249,6 +1203,22 @@ static const void *RB_ClearColor( const void *data )
 }
 
 /*
+=============
+RB_Scissor
+
+SP refexport Scissor command. The Vulkan backend has no dynamic scissor in
+its 2D pipeline yet, so the rect is consumed to keep the command stream in
+sync; actual clipping is a TODO for the runtime milestone.
+=============
+*/
+static const void *RB_Scissor( const void *data )
+{
+	const scissorCommand_t* cmd = (const scissorCommand_t*)data;
+
+	return (const void*)(cmd + 1);
+}
+
+/*
 ====================
 RB_ExecuteRenderCommands
 ====================
@@ -1295,6 +1265,9 @@ void RB_ExecuteRenderCommands( const void *data ) {
 			break;
 		case RC_CLEARCOLOR:
 			data = RB_ClearColor(data);
+			break;
+		case RC_SCISSOR:
+			data = RB_Scissor(data);
 			break;
 		case RC_END_OF_LIST:
 		default:

@@ -737,8 +737,8 @@ void R_BuildSurfaceSpritesVBO( const world_t &worldData, int index )
 	uint32_t estimate_num_instances = 0;
 	vk_estimate_surface_sprite_count( worldData, &estimate_num_instances, &estimate_num_surfs );
 
-	sprite_t *sprite_instances = (sprite_t *)ri.Hunk_AllocateTempMemory( sizeof(sprite_t) * estimate_num_instances );
-	spriteStage_t **sprites_surf = (spriteStage_t **)ri.Hunk_AllocateTempMemory( sizeof(spriteStage_t *) * estimate_num_surfs );
+	sprite_t *sprite_instances = (sprite_t *)Hunk_AllocateTempMemory( sizeof(sprite_t) * estimate_num_instances );
+	spriteStage_t **sprites_surf = (spriteStage_t **)Hunk_AllocateTempMemory( sizeof(spriteStage_t *) * estimate_num_surfs );
 
 	msurface_t *surfaces = worldData.surfaces;
 	float density;
@@ -757,7 +757,7 @@ void R_BuildSurfaceSpritesVBO( const world_t &worldData, int index )
 
 		surf->surface_sprites.num_stages = shader->surface_sprites.num_stages;
 		// ~sunny, is this freed later?
-		surf->surface_sprites.stage = (spriteStage_t *)ri.Hunk_Alloc( sizeof(spriteStage_t) * surf->surface_sprites.num_stages, h_low );
+		surf->surface_sprites.stage = (spriteStage_t *)R_Hunk_Alloc( sizeof(spriteStage_t) * surf->surface_sprites.num_stages, qtrue );
 		
 		uint32_t sprite_index = 0;
 
@@ -815,8 +815,8 @@ void R_BuildSurfaceSpritesVBO( const world_t &worldData, int index )
 
 	vk_flush_surface_sprites_instances( index, sprite_instances, &num_instances, sprites_surf, &num_surfs );
 
-	ri.Hunk_FreeTempMemory( sprite_instances );
-	ri.Hunk_FreeTempMemory( sprites_surf );
+	Hunk_FreeTempMemory( sprite_instances );
+	Hunk_FreeTempMemory( sprites_surf );
 }
 
 void vk_clean_surface_sprites( void )

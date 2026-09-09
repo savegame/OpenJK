@@ -45,7 +45,8 @@ void QDECL Com_OPrintf( const char *msg, ... )
 	Q_vsnprintf(text, sizeof(text), msg, argptr);
 	va_end(argptr);
 
-	ri.OPrintf("%s", text);
+	// SP refimport has no OPrintf; route to the standard print channel.
+	ri.Printf(PRINT_ALL, "%s", text);
 }
 
 void QDECL Com_Error( int level, const char *error, ... )
@@ -77,19 +78,42 @@ int Hunk_MemoryRemaining( void ) {
 	return ri.Z_MemSize( TAG_HUNKALLOC );
 }
 
-// ZONE
-void *Z_Malloc( int iSize, memtag_t eTag, qboolean bZeroit, int iAlign ) {
-	return ri.Z_Malloc( iSize, eTag, bZeroit, iAlign );
+void *R_Malloc( int iSize, memtag_t eTag, qboolean bZeroit ) {
+	return ri.Malloc( iSize, eTag, bZeroit, 4 );
 }
 
-void Z_Free( void *ptr ) {
+void R_Free( void *ptr ) {
 	ri.Z_Free( ptr );
+}
+
+int R_MemSize( memtag_t eTag ) {
+	return ri.Z_MemSize( eTag );
+}
+
+void R_MorphMallocTag( void *pvBuffer, memtag_t eDesiredTag ) {
+	ri.Z_MorphMallocTag( pvBuffer, eDesiredTag );
+}
+
+void *R_Hunk_Alloc( int iSize, qboolean bZeroit ) {
+	return ri.Malloc( iSize, TAG_HUNKALLOC, bZeroit, 4 );
+}
+
+// ZONE
+// These definitions intentionally match the prototypes already declared in
+// SP qcommon.h; the bodies route through the SP refimport instead of the
+// engine-side zone allocator.
+void *Z_Malloc( int iSize, memtag_t eTag, qboolean bZeroit, int iAlign ) {
+	return ri.Malloc( iSize, eTag, bZeroit, iAlign );
+}
+
+int Z_Free( void *ptr ) {
+	return ri.Z_Free( ptr );
 }
 
 int Z_MemSize( memtag_t eTag ) {
 	return ri.Z_MemSize( eTag );
 }
 
-void Z_MorphMallocTag( void *pvBuffer, memtag_t eDesiredTag ) {
-	ri.Z_MorphMallocTag( pvBuffer, eDesiredTag );
+void Z_MorphMallocTag( void *pvAddress, memtag_t eDesiredTag ) {
+	ri.Z_MorphMallocTag( pvAddress, eDesiredTag );
 }

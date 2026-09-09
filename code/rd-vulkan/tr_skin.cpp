@@ -22,6 +22,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 
 #include "tr_local.h"
+#include "qcommon/sstring.h"	// sstring_t
+#include <map>
 
 /*
 ============================================================================
@@ -30,6 +32,11 @@ SKINS
 
 ============================================================================
 */
+
+// cached animation.cfg files, keyed by filename (SP refexport entry point
+// RE_GetAnimationCFG lives at the bottom of this file)
+typedef std::map<sstring_t,char *> AnimationCFGs_t;
+static AnimationCFGs_t AnimationCFGs;
 
 static char *CommaParse( char **data_p );
 //can't be dec'd here since we need it for non-dedicated builds now as well.
@@ -161,7 +168,7 @@ qhandle_t RE_RegisterIndividualSkin( const char *name , qhandle_t hSkin)
 			ri.Printf(PRINT_WARNING, "WARNING: RE_RegisterSkin( '%s' ) more than %u surfaces!\n", name, (unsigned int )ARRAY_LEN( skin->surfaces ) );
 			break;
 		}
-		surf = (skinSurface_t *) Hunk_Alloc( sizeof( *skin->surfaces[0] ), h_low );
+		surf = (skinSurface_t *) R_Hunk_Alloc(sizeof( *skin->surfaces[0] ), qtrue );
 		skin->surfaces[skin->numSurfaces] = (skinSurface_t *)surf;
 
 		Q_strncpyz( surf->name, surfName, sizeof( surf->name ) );
@@ -213,7 +220,7 @@ qhandle_t RE_RegisterSkin( const char *name ) {
 		return 0;
 	}
 	tr.numSkins++;
-	skin = (struct skin_s *)Hunk_Alloc( sizeof( skin_t ), h_low );
+	skin = (struct skin_s *)R_Hunk_Alloc(sizeof( skin_t ), qtrue );
 	tr.skins[hSkin] = skin;
 	Q_strncpyz( skin->name, name, sizeof( skin->name ) );
 	skin->numSurfaces = 0;
@@ -221,7 +228,7 @@ qhandle_t RE_RegisterSkin( const char *name ) {
 	// If not a .skin file, load as a single shader
 	if ( strcmp( name + strlen( name ) - 5, ".skin" ) ) {
 /*		skin->numSurfaces = 1;
-		skin->surfaces[0] = (skinSurface_t *)Hunk_Alloc( sizeof(skin->surfaces[0]), h_low );
+		skin->surfaces[0] = (skinSurface_t *)R_Hunk_Alloc(sizeof(skin->surfaces[0]), qtrue );
 		skin->surfaces[0]->shader = R_FindShader( name, lightmapsNone, stylesDefault, qtrue );
 		return hSkin;
 */
@@ -356,30 +363,6 @@ static char *CommaParse( char **data_p ) {
 
 /*
 ===============
-RE_RegisterServerSkin
-
-Mangled version of the above function to load .skin files on the server.
-===============
-*/
-qhandle_t RE_RegisterServerSkin( const char *name ) {
-	qhandle_t r;
-
-	if (ri.Cvar_VariableIntegerValue( "cl_running" ) &&
-		ri.Com_TheHunkMarkHasBeenMade() &&
-		ShaderHashTableExists())
-	{ //If the client is running then we can go straight into the normal registerskin func
-		return RE_RegisterSkin(name);
-	}
-
-	gServerSkinHack = true;
-	r = RE_RegisterSkin(name);
-	gServerSkinHack = false;
-
-	return r;
-}
-
-/*
-===============
 R_InitSkins
 ===============
 */
@@ -389,10 +372,10 @@ void	R_InitSkins( void ) {
 	tr.numSkins = 1;
 
 	// make the default skin have all default shaders
-	skin = tr.skins[0] = (struct skin_s *)ri.Hunk_Alloc( sizeof( skin_t ), h_low );
+	skin = tr.skins[0] = (struct skin_s *)R_Hunk_Alloc( sizeof( skin_t ), qtrue );
 	Q_strncpyz( skin->name, "<default skin>", sizeof( skin->name )  );
 	skin->numSurfaces = 1;
-	skin->surfaces[0] = (skinSurface_t *)ri.Hunk_Alloc( sizeof( skinSurface_t ), h_low );
+	skin->surfaces[0] = (skinSurface_t *)R_Hunk_Alloc( sizeof( skinSurface_t ), qtrue );
 	skin->surfaces[0]->shader = tr.defaultShader;
 }
 
@@ -429,4 +412,55 @@ void	R_SkinList_f( void ) {
 		}
 	}
 	ri.Printf( PRINT_ALL,  "------------------\n");
+}
+
+/*
+===============
+RE_GetAnimationCFG
+
+SP refexport entry point: cached reads of animation.cfg files.
+Call with psDest == NULL for a size enquiry, then with a valid pointer to
+have the text copied into the supplied buffer.
+===============
+*/
+int RE_GetAnimationCFG(const char *psCFGFilename, char *psDest, int iDestSize)
+{
+	char *psText = NULL;
+
+	AnimationCFGs_t::iterator it = AnimationCFGs.find(psCFGFilename);
+	if (it != AnimationCFGs.end())
+	{
+		psText = (*it).second;
+	}
+	else
+	{
+		// not found, so load it...
+		//
+		fileHandle_t f;
+		int iLen = ri.FS_FOpenFileRead( psCFGFilename, &f, qfalse );
+		if (iLen <= 0)
+		{
+			return 0;
+		}
+
+		psText = (char *) R_Malloc( iLen+1, TAG_ANIMATION_CFG, qfalse );
+
+		ri.FS_Read( psText, iLen, f );
+		psText[iLen] = '\0';
+		ri.FS_FCloseFile( f );
+
+		AnimationCFGs[psCFGFilename] = psText;
+	}
+
+	if (psText)	// sanity, but should always be NZ
+	{
+		if (psDest)
+		{
+			Q_strncpyz(psDest,psText,iDestSize);
+		}
+
+		return strlen(psText);
+	}
+
+	return 0;
 }
