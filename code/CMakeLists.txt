@@ -32,6 +32,9 @@ add_subdirectory("${SPDir}/rd-vanilla")
 #    Add SP GLES3 (AuroraOS) Renderer project
 add_subdirectory("${SPDir}/rd-gles3")
 
+#    Add SP Vulkan Renderer project
+add_subdirectory("${SPDir}/rd-vulkan")
+
 #    Add Engine Project
 if(BuildSPEngine OR BuildJK2SPEngine)
 	# Libraries

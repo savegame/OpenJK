@@ -21,7 +21,7 @@ if(NOT InOpenJK)
 	message(FATAL_ERROR "Use the top-level cmake script!")
 endif(NOT InOpenJK)
 
-set(MPSharedDefines ${SharedDefines})
+set(MPSharedDefines ${SharedDefines} ${AuroraDefines})
 
 #    Add Game Project
 if(BuildMPGame)

@@ -211,7 +211,7 @@ else(WIN32)
 	endif()
 endif()
 
-set_target_properties(${MPVulkanRenderer} PROPERTIES COMPILE_DEFINITIONS "${SharedDefines}")
+set_target_properties(${MPVulkanRenderer} PROPERTIES COMPILE_DEFINITIONS "${SharedDefines} ${AuroraDefines}")
 
 # Hide symbols not explicitly marked public.
 set_property(TARGET ${MPVulkanRenderer} APPEND PROPERTY COMPILE_OPTIONS ${OPENJK_VISIBILITY_FLAGS})

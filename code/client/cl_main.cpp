@@ -1174,6 +1174,11 @@ void CL_InitRef( void ) {
 	rit.PD_Load = PD_Load;
 	rit.PD_Store = PD_Store;
 
+	// Vulkan
+	rit.VK_IsMinimized = WIN_VK_IsMinimized;
+	rit.VK_GetInstanceProcAddress = WIN_VK_GetInstanceProcAddress;
+	rit.VK_createSurfaceImpl = WIN_VK_createSurfaceImpl;
+
 	rit.Error = Com_Error;
 	rit.FS_FileExists = S_FileExists;
 	rit.GetG2VertSpaceServer = GetG2VertSpaceServer;
