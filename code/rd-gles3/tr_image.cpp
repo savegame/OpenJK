@@ -187,8 +187,8 @@ static float R_BytesPerTex (int format)
 		//"RGBA4"
 		return 2;
 		break;
-	case GL_RGB5:
-		//"RGB5 "
+	case GL_RGB565:
+		//"RGB565"
 		return 2;
 		break;
 
@@ -305,8 +305,8 @@ void R_ImageList_f( void ) {
 		case GL_RGBA4:
 			ri.Printf( PRINT_ALL, "RGBA4" );
 			break;
-		case GL_RGB5:
-			ri.Printf( PRINT_ALL, "RGB5 " );
+		case GL_RGB565:
+			ri.Printf( PRINT_ALL, "RGB565" );
 			break;
 		default:
 			ri.Printf( PRINT_ALL, "???? " );
@@ -631,7 +631,7 @@ static void Upload32( unsigned *data,
 	    {
 		    if ( glConfig.textureCompression == TC_S3TC && allowTC )
 		    {
-			    *pformat = GL_RGB4_S3TC;
+			    *pformat = GL_COMPRESSED_RGB_S3TC_DXT1_EXT; // was GL_RGB4_S3TC (no such enum in ES3)
 		    }
 		    else if ( glConfig.textureCompression == TC_S3TC_DXT && allowTC )
 		    {	// Compress purely color - no alpha
@@ -647,7 +647,7 @@ static void Upload32( unsigned *data,
 			    // Allow different bit depth when we are a lightmap
 			    if ( r_texturebitslm->integer == 16 )
 			    {
-				    *pformat = GL_RGB5;
+				    *pformat = GL_RGB565; // was GL_RGB5 (invalid internalformat in ES3)
 			    }
 			    else if ( r_texturebitslm->integer == 32 )
 			    {
@@ -656,7 +656,7 @@ static void Upload32( unsigned *data,
 		    }
 		    else if ( r_texturebits->integer == 16 )
 		    {
-			    *pformat = GL_RGB5;
+			    *pformat = GL_RGB565; // was GL_RGB5
 		    }
 		    else if ( r_texturebits->integer == 32 )
 		    {
@@ -664,7 +664,7 @@ static void Upload32( unsigned *data,
 		    }
 		    else
 		    {
-			    *pformat = 3;
+			    *pformat = GL_RGB8; // was 3 (unsized internalformats are invalid in ES3)
 		    }
 	    }
 	    else if ( samples == 4 )
@@ -683,7 +683,7 @@ static void Upload32( unsigned *data,
 		    }
 		    else
 		    {
-			    *pformat = 4;
+			    *pformat = GL_RGBA8; // was 4
 		    }
 	    }
 

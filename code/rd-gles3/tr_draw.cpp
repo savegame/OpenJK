@@ -26,6 +26,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../server/exe_headers.h"
 #include "tr_common.h"
 #include "tr_local.h"
+#include "tr_gles3.h"
 
 /*
 =============
@@ -48,9 +49,6 @@ void RE_StretchRaw (int x, int y, int w, int h, int cols, int rows, const byte *
 	if ( tess.numIndexes ) {
 		RB_EndSurface();
 	}
-
-	// we definately want to sync every frame for the cinematics
-	qglFinish();
 
 #ifdef TIMEBIND
 	int start, end;
@@ -77,7 +75,7 @@ void RE_StretchRaw (int x, int y, int w, int h, int cols, int rows, const byte *
 		}
 #endif
 
-		qglTexImage2D( GL_TEXTURE_2D, 0, GL_RGB8, cols, rows, 0, GL_RGBA, GL_UNSIGNED_BYTE, data );
+		qglTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA8, cols, rows, 0, GL_RGBA, GL_UNSIGNED_BYTE, data );
 
 		qglTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
 		qglTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
@@ -125,9 +123,28 @@ void RE_StretchRaw (int x, int y, int w, int h, int cols, int rows, const byte *
 		RB_SetGL2D();
 	}
 
-	// TODO(M2): cinematic quad used immediate mode; draw it through the
-	// streaming 2D path (scratchImage stays bound) when the shader UI lands.
-	(void)x; (void)y; (void)w; (void)h; (void)cols; (void)rows;
+	// cinematic quad through the streaming 2D path (scratchImage is bound);
+	// same half-texel inset and identityLight color as the fixed-function path
+	const byte c = Q_ftol( tr.identityLight * 255 );
+	const byte color[4] = { c, c, c, 255 };
+	float xyz[4][4] = {
+		{ (float)x,     (float)y,     0, 1 },
+		{ (float)x + w, (float)y,     0, 1 },
+		{ (float)x,     (float)y + h, 0, 1 },
+		{ (float)x + w, (float)y + h, 0, 1 },
+	};
+	float tc[4][2] = {
+		{ 0.5f / cols, 0.5f / rows },
+		{ ( cols - 0.5f ) / cols, 0.5f / rows },
+		{ 0.5f / cols, ( rows - 0.5f ) / rows },
+		{ ( cols - 0.5f ) / cols, ( rows - 0.5f ) / rows },
+	};
+	g3_pipeline_def_t def = {};
+	def.type = G3_PROG_TEXTURE;
+	def.state_bits = GLS_DEPTHTEST_DISABLE | GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA;
+	def.cull_type = CT_TWO_SIDED;
+
+	g3_draw_arrays( &def, GL_TRIANGLE_STRIP, 4, &xyz[0][0], color, &tc[0][0] );
 }
 
 
@@ -140,7 +157,7 @@ void RE_UploadCinematic (int cols, int rows, const byte *data, int client, qbool
 	if ( cols != tr.scratchImage[client]->width || rows != tr.scratchImage[client]->height ) {
 		tr.scratchImage[client]->width = cols;
 		tr.scratchImage[client]->height = rows;
-		qglTexImage2D( GL_TEXTURE_2D, 0, GL_RGB8, cols, rows, 0, GL_RGBA, GL_UNSIGNED_BYTE, data );
+		qglTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA8, cols, rows, 0, GL_RGBA, GL_UNSIGNED_BYTE, data );
 
 		qglTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
 		qglTexParameterf( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
@@ -411,15 +428,30 @@ static void RE_Blit(float fX0, float fY0, float fX1, float fY1, float fX2, float
 	// some junk they had at the top of other StretchRaw code...
 	//
 	R_IssuePendingRenderCommands();
-//	qglFinish();
+
+	if ( tess.numIndexes ) {
+		RB_EndSurface();
+	}
 
 	GL_Bind( pImage );
-	GL_State(iGLState);
-	GL_Cull( CT_TWO_SIDED ) ;
+	GL_Cull( CT_TWO_SIDED );
 
-	// TODO(M2): dissolve blit quad used immediate mode; port with the 2D
-	// shader path (plan section 1.4, dissolve).
-	(void)fX0; (void)fY0; (void)fX1; (void)fY1; (void)fX2; (void)fY2; (void)fX3; (void)fY3;
+	const byte white[4] = { 255, 255, 255, 255 };
+	float xyz[4][4] = {
+		{ fX0, fY0, 0, 1 },
+		{ fX1, fY1, 0, 1 },
+		{ fX3, fY3, 0, 1 },
+		{ fX2, fY2, 0, 1 },
+	};
+	float tc[4][2] = {
+		{ 0, 0 }, { 1, 0 }, { 0, 1 }, { 1, 1 },
+	};
+	g3_pipeline_def_t def = {};
+	def.type = G3_PROG_TEXTURE;
+	def.state_bits = iGLState; // includes the GLS_ATEST bits for the fuzzy sprite
+	def.cull_type = CT_TWO_SIDED;
+
+	g3_draw_arrays( &def, GL_TRIANGLE_STRIP, 4, &xyz[0][0], white, &tc[0][0] );
 }
 
 static void RE_KillDissolve(void)
