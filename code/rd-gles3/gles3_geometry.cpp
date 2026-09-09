@@ -180,6 +180,10 @@ void ForceAlpha(unsigned char *dstColors, int TR_ForceEntAlpha)
 }
 
 // Upload the current uniform block + MVP to the active program.
+// g_cur_def is set by vk_bind_pipeline and carries the per-pipeline
+// fixed color for the USE_FIXED_COLOR variants.
+static const Vk_Pipeline_Def *g_cur_def;
+
 void gles3_apply_uniforms( void )
 {
 	GLint loc;
@@ -228,13 +232,48 @@ void gles3_apply_uniforms( void )
 	if ( loc >= 0 )
 		glUniform4fv( loc, 1, u->fog.fogColor );
 
+	// texture unit assignments: bundle0..2 -> 0..2, fog -> 3
 	loc = glGetUniformLocation( program, "u_Texture0" );
 	if ( loc >= 0 )
 		glUniform1i( loc, 0 );
 
-	loc = glGetUniformLocation( program, "u_FixedColor" );
+	loc = glGetUniformLocation( program, "u_Texture1" );
 	if ( loc >= 0 )
-		glUniform4f( loc, 1.0f, 1.0f, 1.0f, 1.0f );
+		glUniform1i( loc, 1 );
+
+	loc = glGetUniformLocation( program, "u_Texture2" );
+	if ( loc >= 0 )
+		glUniform1i( loc, 2 );
+
+	loc = glGetUniformLocation( program, "u_TextureFog" );
+	if ( loc >= 0 )
+		glUniform1i( loc, 3 );
+
+	loc = glGetUniformLocation( program, "u_FixedColor" );
+	if ( loc >= 0 ) {
+		if ( g_cur_def ) {
+			glUniform4f( loc, g_cur_def->color.rgb / 255.0f, g_cur_def->color.rgb / 255.0f,
+						 g_cur_def->color.rgb / 255.0f, g_cur_def->color.alpha / 255.0f );
+		} else {
+			glUniform4f( loc, 1.0f, 1.0f, 1.0f, 1.0f );
+		}
+	}
+
+	// alpha test threshold (u_AlphaTest), matching the vk specialization values
+	loc = glGetUniformLocation( program, "u_AlphaTest" );
+	if ( loc >= 0 ) {
+		float value = 0.0f;
+		if ( g_cur_def ) {
+			switch ( g_cur_def->state_bits & GLS_ATEST_BITS ) {
+				case GLS_ATEST_GT_0:	value = 0.0f; break;
+				case GLS_ATEST_LT_80:	value = 0.5f; break;
+				case GLS_ATEST_GE_80:	value = 0.5f; break;
+				case GLS_ATEST_GE_C0:	value = 0.75f; break;
+				default: break;
+			}
+		}
+		glUniform1f( loc, value );
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -415,12 +454,14 @@ void vk_bind_pipeline( uint32_t pipeline )
 {
 	const Vk_Pipeline_Def *def;
 	GLuint program;
+	static qboolean s_colormask_off = qfalse;
 
 	if ( pipeline >= vk.pipelines_count ) {
 		ri.Error( ERR_DROP, "vk_bind_pipeline: invalid pipeline %u", pipeline );
 	}
 
 	def = &vk.pipelines[pipeline].def;
+	g_cur_def = def;
 
 	if ( vk.pipelines[pipeline].program == 0 ) {
 		vk.pipelines[pipeline].program = gles3_get_program( def );
@@ -430,6 +471,27 @@ void vk_bind_pipeline( uint32_t pipeline )
 	glUseProgram( program );
 
 	gles3_set_state( def->state_bits, def->face_culling, def->polygon_offset );
+
+	// Folded-in stage fog samples the fog texture on unit 3 (the frontend
+	// binds per-bundle textures to units 0..2 only).
+	if ( def->fog_stage && def->shader_type != TYPE_FOG_ONLY && tr.fogImage ) {
+		glActiveTexture( GL_TEXTURE3 );
+		glBindTexture( GL_TEXTURE_2D, G3_IMG_H( tr.fogImage->handle ) );
+	}
+
+	// Depth-fragment stages write depth only (ES 3.0 has no gl_FragDepth;
+	// the FS does the alpha cutout and the color mask hides the dummy output).
+	if ( def->shader_type == TYPE_SINGLE_TEXTURE_DF ) {
+		if ( !s_colormask_off ) {
+			glColorMask( GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE );
+			s_colormask_off = qtrue;
+		}
+	} else if ( s_colormask_off ) {
+		glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
+		s_colormask_off = qfalse;
+	}
+
+	glActiveTexture( GL_TEXTURE0 + vk.ctmu );
 }
 
 static void gles3_commit_attribs( void )

@@ -27,6 +27,7 @@ along with OpenJK; if not, see <http://www.gnu.org/licenses/>.
 // uploaded level-by-level with glTexSubImage2D (no staging buffers).
 
 #include "tr_local.h"
+#include "gles3_local.h"
 #include "../rd-common/tr_common.h"
 
 #define	DEFAULT_SIZE	16
@@ -38,7 +39,7 @@ along with OpenJK; if not, see <http://www.gnu.org/licenses/>.
 
 // image_t.handle is a VkImage (opaque pointer typedef) in the shared
 // tr_local.h; we store the GL texture name in it via uintptr_t round-trip.
-#define G3_IMG_H(h)			((GLuint)(uintptr_t)(h))
+// (G3_IMG_H is shared via gles3_local.h; G3_IMG_SET stays local.)
 #define G3_IMG_SET(img, id)	((img)->handle = (VkImage)(uintptr_t)(id))
 
 static image_t *hashTable[FILE_HASH_SIZE];

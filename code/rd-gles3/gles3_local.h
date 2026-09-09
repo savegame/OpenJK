@@ -26,6 +26,11 @@ along with OpenJK; if not, see <http://www.gnu.org/licenses/>.
 
 #pragma once
 
+// image_t.handle is a VkImage (opaque pointer typedef) in the shared
+// tr_local.h; the gles3 backend stores the GL texture name in it via an
+// uintptr_t round-trip.
+#define G3_IMG_H(h)			((GLuint)(uintptr_t)(h))
+
 // viewport/scissor in GL coordinates (origin bottom-left)
 void	gles3_get_viewport_rect( int *x, int *y, int *w, int *h );
 void	gles3_get_scissor_rect( int *x, int *y, int *w, int *h );
