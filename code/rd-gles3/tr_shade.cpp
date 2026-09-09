@@ -27,6 +27,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../server/exe_headers.h"
 
 #include "tr_local.h"
+#include "tr_gles3.h"
 
 /*
 
@@ -36,12 +37,47 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 shaderCommands_t	tess;
-static qboolean	setArraysOnce;
 
 color4ub_t	styleColors[MAX_LIGHT_STYLES];
 bool		styleUpdated[MAX_LIGHT_STYLES];
 
 extern bool g_bRenderGlowingObjects;
+
+void R_BindAnimatedImage( const textureBundle_t *bundle );
+
+/*
+** RB_EmitStage
+**
+** Draw the current tess batch for one shader stage through the GLES3
+** streaming path: pipeline definition (state bits + cull + offset) ->
+** cached GLSL program, CPU-computed MVP, streamed vertex data.
+** TODO(M3): multitexture/lightmap bundle[1] combination, texture-env modes.
+** TODO(M4): fog pass / fog collapse into the stage pipeline.
+*/
+static void RB_EmitStage( shaderStage_t *pStage )
+{
+	g3_pipeline_def_t def;
+
+	memset( &def, 0, sizeof( def ) );
+	def.type = G3_PROG_TEXTURE;
+	def.state_bits = pStage->stateBits;
+	def.cull_type = backEnd.projection2D ? CT_TWO_SIDED : tess.shader->cullType;
+	def.mirror = backEnd.viewParms.isMirror ? true : false;
+	def.polygon_offset = backEnd.projection2D ? false : tess.shader->polygonOffset;
+
+	GL_SelectTexture( 0 );
+	if ( pStage->bundle[0].image != NULL ||
+		 pStage->bundle[0].numImageAnimations > 0 ||
+		 pStage->bundle[0].isVideoMap ) {
+		R_BindAnimatedImage( &pStage->bundle[0] );
+	} else {
+		// stage without a texture (e.g. pure rgbGen color): bind white so a
+		// single textured program covers both cases
+		GL_Bind( tr.whiteImage );
+	}
+
+	g3_draw_tess( &def, tess.numIndexes, tess.indexes );
+}
 
 /*
 ================
@@ -53,15 +89,8 @@ This is just for OpenGL conformance testing, it should never be the fastest
 /*
 TODO(M3): R_ArrayElementDiscrete / R_DrawStripElements (conformance-test
 primitive paths) relied on immediate mode and are dropped; tess output goes
-through the streaming buffer in ES3.
+through the streaming buffer (RB_EmitStage).
 */
-
-static void R_DrawElements( int numIndexes, const glIndex_t *indexes ) {
-	// TODO(M3): draws tess through the geometry streaming buffer
-	// (plan section 2 point 1); r_primitives modes 1/3 (glArrayElement /
-	// discrete arrays) are dropped with fixed-function vertex submission.
-	(void)numIndexes; (void)indexes;
-}
 
 
 
@@ -822,31 +851,10 @@ void ForceAlpha(unsigned char *dstColors, int TR_ForceEntAlpha)
 /*
 ** RB_IterateStagesGeneric
 */
-#ifndef JK2_MODE
-static vec4_t	GLFogOverrideColors[GLFOGOVERRIDE_MAX] =
-{
-	{ 0.0, 0.0, 0.0, 1.0 },	// GLFOGOVERRIDE_NONE
-	{ 0.0, 0.0, 0.0, 1.0 },	// GLFOGOVERRIDE_BLACK
-	{ 1.0, 1.0, 1.0, 1.0 }	// GLFOGOVERRIDE_WHITE
-};
-
-static const float logtestExp2 = (sqrt( -log( 1.0 / 255.0 ) ));
-#endif
 extern bool tr_stencilled; //tr_backend.cpp
 static void RB_IterateStagesGeneric( shaderCommands_t *input )
 {
 	int stage;
-
-	// TODO(M3): all GL emission of this function (client-state arrays,
-	// texture env / multitexture collapse, hardware GL_FOG, distortion
-	// bind, R_DrawElements) is reimplemented in M3 as pipeline-def
-	// selection + streaming draw (plan section 1.1, tr_shade iteration in
-	// gles3-quake3e as reference). Per-stage CPU shading math below is
-	// preserved unchanged.
-	// TODO(M4): global/ranged hardware fog (GL_FOG EXP2/linear, fog color
-	// overrides) becomes fog uniforms in the shader pipeline (plan 1.5).
-	(void)GLFogOverrideColors;
-	(void)logtestExp2;
 
 	for ( stage = 0; stage < input->shader->numUnfoggedPasses; stage++ )
 	{
@@ -892,6 +900,9 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			ComputeColors( pStage, forceAlphaGen, forceRGBGen );
 		}
 		ComputeTexCoords( pStage );
+
+		// emit the stage through the GLES3 streaming path
+		RB_EmitStage( pStage );
 	}
 }
 
@@ -921,17 +932,6 @@ void RB_StageIteratorGeneric( void )
 	// set face culling appropriately
 	//
 	GL_Cull( input->shader->cullType );
-
-	// set polygon offset if necessary
-	if ( input->shader->polygonOffset )
-	{
-		qglEnable( GL_POLYGON_OFFSET_FILL );
-		qglPolygonOffset( r_offsetFactor->value, r_offsetUnits->value );
-	}
-
-	// TODO(M3): fixed-function client arrays and compiled vertex arrays
-	// (glLockArraysEXT) are gone; tess uploads to the streaming buffer.
-	setArraysOnce = qtrue;
 
 	//
 	// call shader function
@@ -965,13 +965,8 @@ void RB_StageIteratorGeneric( void )
 		RB_FogPass();
 	}
 
-	//
-	// reset polygon offset
-	//
-	if ( input->shader->polygonOffset )
-	{
-		qglDisable( GL_POLYGON_OFFSET_FILL );
-	}
+	// polygon offset (if any) was a per-draw pipeline property in
+	// RB_EmitStage; nothing to reset here.
 
 	// Now check for surfacesprites.
 	if (r_surfaceSprites->integer)
@@ -985,8 +980,6 @@ void RB_StageIteratorGeneric( void )
 		}
 	}
 
-	// TODO(M4): hardware fog disable lived here; fog state moves into the
-	// shader pipeline uniforms (plan section 1.5).
 }
 
 

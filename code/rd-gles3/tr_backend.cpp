@@ -25,6 +25,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "tr_local.h"
 #include "tr_common.h"
+#include "tr_gles3.h"
 
 backEndData_t	*backEndData;
 backEndState_t	backEnd;
@@ -129,37 +130,7 @@ void GL_Cull( int cullType ) {
 		return;
 	}
 
-	if ( cullType == CT_TWO_SIDED )
-	{
-		qglDisable( GL_CULL_FACE );
-	}
-	else
-	{
-		qglEnable( GL_CULL_FACE );
-
-		if ( cullType == CT_BACK_SIDED )
-		{
-			if ( backEnd.viewParms.isMirror )
-			{
-				qglCullFace( GL_FRONT );
-			}
-			else
-			{
-				qglCullFace( GL_BACK );
-			}
-		}
-		else
-		{
-			if ( backEnd.viewParms.isMirror )
-			{
-				qglCullFace( GL_BACK );
-			}
-			else
-			{
-				qglCullFace( GL_FRONT );
-			}
-		}
-	}
+	g3_cull( (cullType_t)cullType, backEnd.viewParms.isMirror ? true : false );
 }
 
 /*
@@ -178,154 +149,14 @@ void GL_TexEnv( int env )
 ** GL_State
 **
 ** This routine is responsible for setting the most commonly changed state
-** in Q3.
+** in Q3. In this renderer the actual GL calls go through the GLES3 state
+** cache (tr_gles3.cpp); per-draw state arrives via the pipeline definition
+** built from these same GLS_ bits in tr_shade.cpp.
 */
 void GL_State( uint32_t stateBits )
 {
-	uint32_t diff = stateBits ^ glState.glStateBits;
-
-	if ( !diff )
-	{
-		return;
-	}
-
-	//
-	// check depthFunc bits
-	//
-	if ( diff & GLS_DEPTHFUNC_EQUAL )
-	{
-		if ( stateBits & GLS_DEPTHFUNC_EQUAL )
-		{
-			qglDepthFunc( GL_EQUAL );
-		}
-		else
-		{
-			qglDepthFunc( GL_LEQUAL );
-		}
-	}
-
-	//
-	// check blend bits
-	//
-	if ( diff & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS ) )
-	{
-		GLenum srcFactor, dstFactor;
-
-		if ( stateBits & ( GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS ) )
-		{
-			switch ( stateBits & GLS_SRCBLEND_BITS )
-			{
-			case GLS_SRCBLEND_ZERO:
-				srcFactor = GL_ZERO;
-				break;
-			case GLS_SRCBLEND_ONE:
-				srcFactor = GL_ONE;
-				break;
-			case GLS_SRCBLEND_DST_COLOR:
-				srcFactor = GL_DST_COLOR;
-				break;
-			case GLS_SRCBLEND_ONE_MINUS_DST_COLOR:
-				srcFactor = GL_ONE_MINUS_DST_COLOR;
-				break;
-			case GLS_SRCBLEND_SRC_ALPHA:
-				srcFactor = GL_SRC_ALPHA;
-				break;
-			case GLS_SRCBLEND_ONE_MINUS_SRC_ALPHA:
-				srcFactor = GL_ONE_MINUS_SRC_ALPHA;
-				break;
-			case GLS_SRCBLEND_DST_ALPHA:
-				srcFactor = GL_DST_ALPHA;
-				break;
-			case GLS_SRCBLEND_ONE_MINUS_DST_ALPHA:
-				srcFactor = GL_ONE_MINUS_DST_ALPHA;
-				break;
-			case GLS_SRCBLEND_ALPHA_SATURATE:
-				srcFactor = GL_SRC_ALPHA_SATURATE;
-				break;
-			default:
-				srcFactor = GL_ONE;		// to get warning to shut up
-				Com_Error( ERR_DROP, "GL_State: invalid src blend state bits\n" );
-				break;
-			}
-
-			switch ( stateBits & GLS_DSTBLEND_BITS )
-			{
-			case GLS_DSTBLEND_ZERO:
-				dstFactor = GL_ZERO;
-				break;
-			case GLS_DSTBLEND_ONE:
-				dstFactor = GL_ONE;
-				break;
-			case GLS_DSTBLEND_SRC_COLOR:
-				dstFactor = GL_SRC_COLOR;
-				break;
-			case GLS_DSTBLEND_ONE_MINUS_SRC_COLOR:
-				dstFactor = GL_ONE_MINUS_SRC_COLOR;
-				break;
-			case GLS_DSTBLEND_SRC_ALPHA:
-				dstFactor = GL_SRC_ALPHA;
-				break;
-			case GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA:
-				dstFactor = GL_ONE_MINUS_SRC_ALPHA;
-				break;
-			case GLS_DSTBLEND_DST_ALPHA:
-				dstFactor = GL_DST_ALPHA;
-				break;
-			case GLS_DSTBLEND_ONE_MINUS_DST_ALPHA:
-				dstFactor = GL_ONE_MINUS_DST_ALPHA;
-				break;
-			default:
-				dstFactor = GL_ONE;		// to get warning to shut up
-				Com_Error( ERR_DROP, "GL_State: invalid dst blend state bits\n" );
-				break;
-			}
-
-			qglEnable( GL_BLEND );
-			qglBlendFunc( srcFactor, dstFactor );
-		}
-		else
-		{
-			qglDisable( GL_BLEND );
-		}
-	}
-
-	//
-	// check depthmask
-	//
-	if ( diff & GLS_DEPTHMASK_TRUE )
-	{
-		if ( stateBits & GLS_DEPTHMASK_TRUE )
-		{
-			qglDepthMask( GL_TRUE );
-		}
-		else
-		{
-			qglDepthMask( GL_FALSE );
-		}
-	}
-
-	// TODO(M3): qglPolygonMode does not exist in ES3; wireframe is a
-	// pipeline property of the future debug shader.
-
-	//
-	// depthtest
-	//
-	if ( diff & GLS_DEPTHTEST_DISABLE )
-	{
-		if ( stateBits & GLS_DEPTHTEST_DISABLE )
-		{
-			qglDisable( GL_DEPTH_TEST );
-		}
-		else
-		{
-			qglEnable( GL_DEPTH_TEST );
-		}
-	}
-
-	// TODO(M3): GL_ALPHA_TEST / qglAlphaFunc do not exist in ES3; alpha test
-	// becomes a discard in the fragment shader (part of the pipeline def).
-
 	glState.glStateBits = stateBits;
+	g3_state_bits( stateBits );
 }
 
 
@@ -353,9 +184,9 @@ static void RB_Hyperspace( void ) {
 
 
 void SetViewportAndScissor( void ) {
-	// TODO(M2/M3): the projection matrix used to be loaded onto the
-	// GL_PROJECTION stack here; in ES3 it is passed as a shader uniform
-	// (CPU-computed ortho/perspective, plan section 1.1).
+	// the projection/modelview matrices used to be loaded onto the GL matrix
+	// stacks here; in ES3 the MVP is a CPU-computed shader uniform
+	// (g3_get_mvp, plan section 1.1).
 
 	// set the window clipping
 	qglViewport( backEnd.viewParms.viewportX, backEnd.viewParms.viewportY,
@@ -894,15 +725,16 @@ void	RB_SetGL2D (void) {
 	qglViewport( 0, 0, glConfig.vidWidth, glConfig.vidHeight );
 	qglScissor( 0, 0, glConfig.vidWidth, glConfig.vidHeight );
 
-	// TODO(M2): the 640x480 ortho used to be set via the GL_PROJECTION
-	// stack; in ES3 it is a CPU-computed uniform (GL_Ortho equivalent,
-	// plan section 2 point 5).
+	// 640x480 ortho used to be set via the GL_PROJECTION stack; in ES3 it
+	// is a CPU-computed uniform (g3_get_mvp, plan section 2 point 5).
 
 	GL_State( GLS_DEPTHTEST_DISABLE |
 			  GLS_SRCBLEND_SRC_ALPHA |
 			  GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA );
 
-	qglDisable( GL_CULL_FACE );
+	// vanilla disabled face culling for all 2D drawing
+	g3_cull( CT_TWO_SIDED, qfalse );
+	glState.faceCulling = CT_TWO_SIDED;
 
 	// set time for 2D shaders
 	backEnd.refdef.time = ri.Milliseconds();
@@ -1335,9 +1167,54 @@ Also called by RE_EndRegistration
 ===============
 */
 void RB_ShowImages( void ) {
-	// TODO(M2): immediate-mode texture browser quad grid; port to the
-	// streaming 2D path together with RB_SetGL2D.
-	(void)R_Images_StartIteration;
+	image_t	*image;
+	float	x, y, w, h;
+	int		i;
+
+	if ( !backEnd.projection2D ) {
+		RB_SetGL2D();
+	}
+
+	// grid cells are laid out in real pixels; the 2D MVP works in the
+	// 640x480 virtual screen, so scale the coordinates
+	const float sx = 640.0f / glConfig.vidWidth;
+	const float sy = 480.0f / glConfig.vidHeight;
+
+	const byte white[4] = { 255, 255, 255, 255 };
+
+	i = 0;
+	R_Images_StartIteration();
+	while ( (image = R_Images_GetNextIteration()) != NULL )
+	{
+		w = glConfig.vidWidth / 20;
+		h = glConfig.vidHeight / 15;
+		x = i % 20 * w;
+		y = i / 20 * h;
+
+		// show in proportional size in mode 2
+		if ( r_showImages->integer == 2 ) {
+			w *= image->width / 512.0;
+			h *= image->height / 512.0;
+		}
+
+		float xyz[4][4] = {
+			{ x * sx,     y * sy,     0, 1 },
+			{ (x+w) * sx, y * sy,     0, 1 },
+			{ x * sx,     (y+h) * sy, 0, 1 },
+			{ (x+w) * sx, (y+h) * sy, 0, 1 },
+		};
+		float tc[4][2] = {
+			{ 0, 0 }, { 1, 0 }, { 0, 1 }, { 1, 1 },
+		};
+		g3_pipeline_def_t def = {};
+		def.type = G3_PROG_TEXTURE;
+		def.state_bits = GLS_DEPTHTEST_DISABLE | GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA;
+		def.cull_type = CT_TWO_SIDED;
+
+		GL_Bind( image );
+		g3_draw_arrays( &def, GL_TRIANGLE_STRIP, 4, &xyz[0][0], white, &tc[0][0] );
+		i++;
+	}
 }
 
 
@@ -1377,6 +1254,9 @@ const void	*RB_SwapBuffers( const void *data ) {
     GLimp_LogComment( "***************** RB_SwapBuffers *****************\n\n\n" );
 
 	ri.WIN_Present(&window);
+
+	// the next draw of the new frame orphans the geometry storage again
+	g3_frame_end();
 
 	backEnd.projection2D = qfalse;
 
