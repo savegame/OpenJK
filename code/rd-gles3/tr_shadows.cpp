@@ -1,31 +1,28 @@
 /*
 ===========================================================================
-Copyright (C) 1999 - 2005, Id Software, Inc.
-Copyright (C) 2000 - 2013, Raven Software, Inc.
-Copyright (C) 2001 - 2013, Activision, Inc.
-Copyright (C) 2013 - 2015, OpenJK contributors
+Copyright (C) 1999-2005 Id Software, Inc.
 
-This file is part of the OpenJK source code.
+This file is part of Quake III Arena source code.
 
-OpenJK is free software; you can redistribute it and/or modify it
-under the terms of the GNU General Public License version 2 as
-published by the Free Software Foundation.
+Quake III Arena source code is free software; you can redistribute it
+and/or modify it under the terms of the GNU General Public License as
+published by the Free Software Foundation; either version 2 of the License,
+or (at your option) any later version.
 
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
+Quake III Arena source code is distributed in the hope that it will be
+useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with this program; if not, see <http://www.gnu.org/licenses/>.
+along with Foobar; if not, write to the Free Software
+Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 ===========================================================================
 */
-#include "../server/exe_headers.h"
 
 #include "tr_local.h"
 
 /*
-
   for a projection shadow:
 
   point[x] += light vector * ( z - shadow plane )
@@ -33,10 +30,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
   point[z] = shadow plane
 
   1 0 light[x] / light[z]
-
 */
-
-#define _STENCIL_REVERSE
 
 typedef struct {
 	int		i2;
@@ -47,30 +41,78 @@ typedef struct {
 
 static	edgeDef_t	edgeDefs[SHADER_MAX_VERTEXES][MAX_EDGE_DEFS];
 static	int			numEdgeDefs[SHADER_MAX_VERTEXES];
-static	int			facing[SHADER_MAX_INDEXES/3];
-static	vec3_t		shadowXyz[SHADER_MAX_VERTEXES];
+static	int			facing[SHADER_MAX_INDEXES / 3];
 
-
-void R_AddEdgeDef( int i1, int i2, int facing ) {
-	int		c;
-
-	c = numEdgeDefs[ i1 ];
-	if ( c == MAX_EDGE_DEFS ) {
+static void R_AddEdgeDef(int i1, int i2, int facing) {
+	int		c = numEdgeDefs[i1];
+	if (c == MAX_EDGE_DEFS) {
 		return;		// overflow
 	}
-	edgeDefs[ i1 ][ c ].i2 = i2;
-	edgeDefs[ i1 ][ c ].facing = facing;
+	edgeDefs[i1][c].i2 = i2;
+	edgeDefs[i1][c].facing = facing;
 
-	numEdgeDefs[ i1 ]++;
+	numEdgeDefs[i1]++;
 }
 
-void R_RenderShadowEdges( void ) {
-	// TODO(M6): stencil shadow volumes were emitted with immediate mode;
-	// port to the streaming buffer with glStencilOpSeparate (ES3 core,
-	// plan section M6).
-}
+static void R_CalcShadowEdges(void) {
+	qboolean	sil_edge;
+	int			i;
+	int			c, c2;
+	int			j, k;
+	int			i2;
+	color4ub_t *colors;
 
-//#define _DEBUG_STENCIL_SHADOWS
+	tess.numIndexes = 0;
+
+	// an edge is NOT a silhouette edge if its face doesn't face the light,
+	// or if it has a reverse paired edge that also faces the light.
+	// A well behaved polyhedron would have exactly two faces for each edge,
+	// but lots of models have dangling edges or overfanned edges
+	for (i = 0; i < tess.numVertexes; i++) {
+		c = numEdgeDefs[i];
+		for (j = 0; j < c; j++) {
+			if (!edgeDefs[i][j].facing) {
+				continue;
+			}
+
+			sil_edge = qtrue;
+			i2 = edgeDefs[i][j].i2;
+			c2 = numEdgeDefs[i2];
+			for (k = 0; k < c2; k++) {
+				if (edgeDefs[i2][k].i2 == i && edgeDefs[i2][k].facing) {
+					sil_edge = qfalse;
+					break;
+				}
+			}
+
+			// if it doesn't share the edge with another front facing
+			// triangle, it is a sil edge
+			if (sil_edge) {
+				if (tess.numIndexes > ARRAY_LEN(tess.indexes) - 6) {
+					i = tess.numVertexes;
+					break;
+				}
+
+				tess.indexes[tess.numIndexes + 0] = i;
+				tess.indexes[tess.numIndexes + 1] = i2;
+				tess.indexes[tess.numIndexes + 2] = i + tess.numVertexes;
+				tess.indexes[tess.numIndexes + 3] = i2;
+				tess.indexes[tess.numIndexes + 4] = i2 + tess.numVertexes;
+				tess.indexes[tess.numIndexes + 5] = i + tess.numVertexes;
+
+				tess.numIndexes += 6;
+			}
+		}
+	}
+
+	tess.numVertexes *= 2;
+
+	colors = &tess.svars.colors[0][0]; // we need at least 2x SHADER_MAX_VERTEXES there
+
+	for (i = 0; i < tess.numVertexes; i++) {
+		Vector4Set(colors[i], 50, 50, 50, 255);
+	}
+}
 
 /*
 =================
@@ -84,99 +126,126 @@ triangleFromEdge[ v1 ][ v2 ]
   }
 =================
 */
-void RB_DoShadowTessEnd( vec3_t lightPos );
+void RB_ShadowTessEnd(void) {
+	int			i, numTris;
+	vec3_t		lightDir;
+	uint32_t	pipeline[2];
 
-void RB_ShadowTessEnd( void )
-{
-	// CPU silhouette setup + (TODO(M6)) stencil emission; see
-	// RB_DoShadowTessEnd / R_RenderShadowEdges.
-	RB_DoShadowTessEnd(NULL);
-}
-
-void RB_DoShadowTessEnd( vec3_t lightPos )
-{
-	int		i;
-	int		numTris;
-	vec3_t	lightDir;
-
-	if ( glConfig.stencilBits < 4 ) {
+	if (glConfig.stencilBits < 4)
 		return;
-	}
 
-	vec3_t	worldxyz;
+#if 1
 	vec3_t	entLight;
+	vec3_t	worldxyz;
 	float	groundDist;
 
-	VectorCopy( backEnd.currentEntity->lightDir, entLight );
+#ifdef USE_PMLIGHT
+	if (r_dlightMode->integer == 2 && r_shadows->integer == 2)
+		VectorCopy(backEnd.currentEntity->shadowLightDir, entLight);
+	else
+#endif
+		VectorCopy(backEnd.currentEntity->modelLightDir, entLight);
+
 	entLight[2] = 0.0f;
 	VectorNormalize(entLight);
 
 	//Oh well, just cast them straight down no matter what onto the ground plane.
-	VectorSet(lightDir, entLight[0]*0.3f, entLight[1]*0.3f, 1.0f);
+	//This presets no chance of screwups and still looks better than a stupid
+	//shader blob.
+	VectorSet(lightDir, entLight[0] * 0.3f, entLight[1] * 0.3f, 1.0f);
+	
 	// project vertexes away from light direction
-	for ( i = 0 ; i < tess.numVertexes ; i++ ) {
+	for (i = 0; i < tess.numVertexes; i++) {
+		//add or.origin to vert xyz to end up with world oriented coord, then figure
+		//out the ground pos for the vert to project the shadow volume to
 		VectorAdd(tess.xyz[i], backEnd.ori.origin, worldxyz);
 		groundDist = worldxyz[2] - backEnd.currentEntity->e.shadowPlane;
 		groundDist += 16.0f; //fudge factor
-		VectorMA( tess.xyz[i], -groundDist, lightDir, shadowXyz[i] );
+		VectorMA(tess.xyz[i], -groundDist, lightDir, tess.xyz[i + tess.numVertexes]);
+	}
+#else
+#ifdef USE_PMLIGHT
+	if (r_dlightMode->integer == 2 && r_shadows->integer == 2)
+		VectorCopy(backEnd.currentEntity->shadowLightDir, lightDir);
+	else
+#endif
+		VectorCopy(backEnd.currentEntity->modelLightDir, lightDir);
+
+	// clamp projection by height
+	if (lightDir[2] > 0.1) {
+		float s = 0.1 / lightDir[2];
+		VectorScale(lightDir, s, lightDir);
 	}
 
+	// project vertexes away from light direction
+	for (i = 0; i < tess.numVertexes; i++) {
+		VectorMA(tess.xyz[i], -512, lightDir, tess.xyz[i + tess.numVertexes]);
+	}
+#endif 
+
 	// decide which triangles face the light
-	memset( numEdgeDefs, 0, 4 * tess.numVertexes );
+	Com_Memset(numEdgeDefs, 0, tess.numVertexes * sizeof(numEdgeDefs[0]));
 
 	numTris = tess.numIndexes / 3;
-	for ( i = 0 ; i < numTris ; i++ ) {
+	for (i = 0; i < numTris; i++)
+	{
 		int		i1, i2, i3;
 		vec3_t	d1, d2, normal;
 		float	*v1, *v2, *v3;
 		float	d;
 
 		i1 = tess.indexes[ i*3 + 0 ];
-		i2 = tess.indexes[ i*3 + 1 ];
-		i3 = tess.indexes[ i*3 + 2 ];
+		i2 = tess.indexes[ i*3 + 1];
+		i3 = tess.indexes[ i*3 + 2];
 
 		v1 = tess.xyz[ i1 ];
 		v2 = tess.xyz[ i2 ];
 		v3 = tess.xyz[ i3 ];
 
-		if (!lightPos)
-		{
-			VectorSubtract( v2, v1, d1 );
-			VectorSubtract( v3, v1, d2 );
-			CrossProduct( d1, d2, normal );
+		VectorSubtract( v2, v1, d1 );
+		VectorSubtract( v3, v1, d2 );
+		CrossProduct( d1, d2, normal );
 
-			d = DotProduct( normal, lightDir );
-		}
-		else
-		{
-			float planeEq[4];
-			planeEq[0] = v1[1]*(v2[2]-v3[2]) + v2[1]*(v3[2]-v1[2]) + v3[1]*(v1[2]-v2[2]);
-			planeEq[1] = v1[2]*(v2[0]-v3[0]) + v2[2]*(v3[0]-v1[0]) + v3[2]*(v1[0]-v2[0]);
-			planeEq[2] = v1[0]*(v2[1]-v3[1]) + v2[0]*(v3[1]-v1[1]) + v3[0]*(v1[1]-v2[1]);
-			planeEq[3] = -( v1[0]*( v2[1]*v3[2] - v3[1]*v2[2] ) +
-						v2[0]*(v3[1]*v1[2] - v1[1]*v3[2] ) +
-						v3[0]*(v1[1]*v2[2] - v2[1]*v1[2] ) );
-
-			d = planeEq[0]*lightPos[0]+
-				planeEq[1]*lightPos[1]+
-				planeEq[2]*lightPos[2]+
-				planeEq[3];
-		}
-
+		d = DotProduct( normal, lightDir );
 		if ( d > 0 ) {
-			facing[ i ] = 1;
-		} else {
-			facing[ i ] = 0;
+			facing[i] = 1;
+		}
+		else {
+			facing[i] = 0;
 		}
 
 		// create the edges
-		R_AddEdgeDef( i1, i2, facing[ i ] );
-		R_AddEdgeDef( i2, i3, facing[ i ] );
-		R_AddEdgeDef( i3, i1, facing[ i ] );
+		R_AddEdgeDef( i1, i2, facing[i] );
+		R_AddEdgeDef( i2, i3, facing[i] );
+		R_AddEdgeDef( i3, i1, facing[i] );
+	}
+	
+	R_CalcShadowEdges();
+
+	// draw the silhouette edges
+	vk_bind(tr.whiteImage);
+
+	// mirrors have the culling order reversed
+	if (backEnd.viewParms.portalView == PV_MIRROR) {
+		pipeline[0] = vk.std_pipeline.shadow_volume_pipelines[0][1];
+		pipeline[1] = vk.std_pipeline.shadow_volume_pipelines[1][1];
+	}
+	else {
+		pipeline[0] = vk.std_pipeline.shadow_volume_pipelines[0][0];
+		pipeline[1] = vk.std_pipeline.shadow_volume_pipelines[1][0];
 	}
 
-	// TODO(M6): the stencil emission (color mask off, depth func less,
-	// R_RenderShadowEdges with stencil ops) moves to the streaming path.
+	vk_bind_pipeline(pipeline[0]); // back-sided
+	vk_bind_index();
+	vk_bind_geometry(TESS_XYZ | TESS_RGBA0);
+	vk_draw_geometry(DEPTH_RANGE_NORMAL, qtrue);
+	vk_bind_pipeline(pipeline[1]); // front-sided
+	vk_draw_geometry(DEPTH_RANGE_NORMAL, qtrue);
+
+	tess.numVertexes /= 2;
+
+	backEnd.doneShadows = qtrue;
+	tess.numIndexes = 0;
 }
 
 
@@ -190,9 +259,55 @@ because otherwise shadows from different body parts would
 overlap and double darken.
 =================
 */
-void RB_ShadowFinish( void ) {
-	// TODO(M6): the fullscreen stencil-modulated darken quad used immediate
-	// mode; port to the 2D streaming path with the shadow pipeline.
+void RB_ShadowFinish(void)
+{
+	float tmp[16];
+	int i;
+
+	if (!backEnd.doneShadows)
+		return;
+
+	backEnd.doneShadows = qfalse;
+
+	if (r_shadows->integer != 2)
+		return;
+	
+	if (glConfig.stencilBits < 4)
+		return;
+
+	static const vec3_t verts[4] = {
+		{ -100, 100, -10 },
+		{  100, 100, -10 },
+		{ -100,-100, -10 },
+		{  100,-100, -10 }
+	};
+
+	vk_bind(tr.whiteImage);
+
+	for (i = 0; i < 4; i++)
+	{
+		VectorCopy(verts[i], tess.xyz[i]);
+		Vector4Set(tess.svars.colors[0][i], 153, 153, 153, 255);
+	}
+	tess.numVertexes = 4;
+
+	Com_Memcpy(tmp, vk_world.modelview_transform, 64);
+	Com_Memset(vk_world.modelview_transform, 0, 64);
+
+	vk_world.modelview_transform[0] = 1.0f;
+	vk_world.modelview_transform[5] = 1.0f;
+	vk_world.modelview_transform[10] = 1.0f;
+	vk_world.modelview_transform[15] = 1.0f;
+
+	vk_bind_pipeline(vk.std_pipeline.shadow_finish_pipeline);
+	vk_update_mvp(NULL);
+	vk_bind_geometry(TESS_XYZ | TESS_RGBA0);
+	vk_draw_geometry(DEPTH_RANGE_NORMAL, qfalse);
+
+	Com_Memcpy(vk_world.modelview_transform, tmp, 64);
+
+	tess.numIndexes = 0;
+	tess.numVertexes = 0;
 }
 
 
@@ -202,17 +317,16 @@ RB_ProjectionShadowDeform
 
 =================
 */
-void RB_ProjectionShadowDeform( void ) {
-	float	*xyz;
+void RB_ProjectionShadowDeform(void)
+{
 	int		i;
-	float	h;
+	float	*xyz;
 	vec3_t	ground;
+	float	groundDist, d, h;
 	vec3_t	light;
-	float	groundDist;
-	float	d;
 	vec3_t	lightDir;
 
-	xyz = ( float * ) tess.xyz;
+	xyz = (float*)tess.xyz;
 
 	ground[0] = backEnd.ori.axis[0][2];
 	ground[1] = backEnd.ori.axis[1][2];
@@ -220,12 +334,19 @@ void RB_ProjectionShadowDeform( void ) {
 
 	groundDist = backEnd.ori.origin[2] - backEnd.currentEntity->e.shadowPlane;
 
-	VectorCopy( backEnd.currentEntity->lightDir, lightDir );
-	d = DotProduct( lightDir, ground );
+#ifdef USE_PMLIGHT
+	if (r_dlightMode->integer == 2 && r_shadows->integer == 2)
+		VectorCopy(backEnd.currentEntity->shadowLightDir, lightDir);
+	else
+#endif
+		VectorCopy(backEnd.currentEntity->modelLightDir, lightDir);
+
+	d = DotProduct(lightDir, ground);
 	// don't let the shadows get too long or go negative
-	if ( d < 0.5 ) {
-		VectorMA( lightDir, (0.5 - d), ground, lightDir );
-		d = DotProduct( lightDir, ground );
+	if (d < 0.5)
+	{
+		VectorMA(lightDir, (0.5 - d), ground, lightDir);
+		d = DotProduct(lightDir, ground);
 	}
 	d = 1.0 / d;
 
@@ -233,90 +354,13 @@ void RB_ProjectionShadowDeform( void ) {
 	light[1] = lightDir[1] * d;
 	light[2] = lightDir[2] * d;
 
-	for ( i = 0; i < tess.numVertexes; i++, xyz += 4 ) {
-		h = DotProduct( xyz, ground ) + groundDist;
+
+	for (i = 0; i < tess.numVertexes; i++, xyz += 4)
+	{
+		h = DotProduct(xyz, ground) + groundDist;
 
 		xyz[0] -= light[0] * h;
 		xyz[1] -= light[1] * h;
 		xyz[2] -= light[2] * h;
 	}
-}
-
-//update tr.screenImage
-void RB_CaptureScreenImage(void)
-{
-	int radX = 2048;
-	int radY = 2048;
-	int x = glConfig.vidWidth/2;
-	int y = glConfig.vidHeight/2;
-	int cX, cY;
-
-	GL_Bind( tr.screenImage );
-	//using this method, we could pixel-filter the texture and all sorts of crazy stuff.
-	//but, it is slow as hell.
-	/*
-	static byte *tmp = NULL;
-	if (!tmp)
-	{
-		tmp = (byte *)R_Malloc((sizeof(byte)*4)*(glConfig.vidWidth*glConfig.vidHeight), TAG_ICARUS, qtrue);
-	}
-	qglReadPixels(0, 0, glConfig.vidWidth, glConfig.vidHeight, GL_RGBA, GL_UNSIGNED_BYTE, tmp);
-	qglTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 512, 512, 0, GL_RGBA, GL_UNSIGNED_BYTE, tmp);
-	*/
-
-	if (radX > glConfig.maxTextureSize)
-	{
-		radX = glConfig.maxTextureSize;
-	}
-	if (radY > glConfig.maxTextureSize)
-	{
-		radY = glConfig.maxTextureSize;
-	}
-
-	while (glConfig.vidWidth < radX)
-	{
-		radX /= 2;
-	}
-	while (glConfig.vidHeight < radY)
-	{
-		radY /= 2;
-	}
-
-	cX = x-(radX/2);
-	cY = y-(radY/2);
-
-	if (cX+radX > glConfig.vidWidth)
-	{ //would it go off screen?
-		cX = glConfig.vidWidth-radX;
-	}
-	else if (cX < 0)
-	{ //cap it off at 0
-		cX = 0;
-	}
-
-	if (cY+radY > glConfig.vidHeight)
-	{ //would it go off screen?
-		cY = glConfig.vidHeight-radY;
-	}
-	else if (cY < 0)
-	{ //cap it off at 0
-		cY = 0;
-	}
-
-		// TODO(M7): distortion capture moves to FBO color-attachment copies
-	// (plan section 1.4); RGBA8 scratch for now.
-	qglCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, cX, cY, radX, radY, 0);
-}
-
-
-//yeah.. not really shadow-related.. but it's stencil-related. -rww
-float tr_distortionAlpha = 1.0f; //opaque
-float tr_distortionStretch = 0.0f; //no stretch override
-qboolean tr_distortionPrePost = qfalse; //capture before postrender phase?
-qboolean tr_distortionNegate = qfalse; //negative blend mode
-void RB_DistortionFill(void)
-{
-	// TODO(M7): the stencil-cut distortion overlay used immediate mode and
-	// the matrix stack; reimplement as a textured 2D pass reading the FBO
-	// capture (plan section 1.4).
 }

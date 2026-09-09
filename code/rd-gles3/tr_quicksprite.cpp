@@ -1,6 +1,5 @@
 /*
 ===========================================================================
-Copyright (C) 1999 - 2005, Id Software, Inc.
 Copyright (C) 2000 - 2013, Raven Software, Inc.
 Copyright (C) 2001 - 2013, Activision, Inc.
 Copyright (C) 2013 - 2015, OpenJK contributors
@@ -24,34 +23,28 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // tr_QuickSprite.cpp: implementation of the CQuickSpriteSystem class.
 //
 //////////////////////////////////////////////////////////////////////
-#include "../server/exe_headers.h"
+#include "tr_local.h"
+
 #include "tr_quicksprite.h"
-
-extern void R_BindAnimatedImage( const textureBundle_t *bundle );
-
 
 //////////////////////////////////////////////////////////////////////
 // Singleton System
 //////////////////////////////////////////////////////////////////////
 CQuickSpriteSystem SQuickSprite;
 
-
 //////////////////////////////////////////////////////////////////////
 // Construction/Destruction
 //////////////////////////////////////////////////////////////////////
 
 CQuickSpriteSystem::CQuickSpriteSystem() :
+	vk_pipeline(0),
 	mTexBundle(NULL),
-	mGLStateBits(0),
 	mFogIndex(-1),
-	mUseFog(qfalse),
-	mNextVert(0)
+	mUseFog(qfalse)
 {
-	int i;
+	uint32_t i;
 
-	memset( mVerts, 0, sizeof( mVerts ) );
-	memset( mFogTextureCoords, 0, sizeof( mFogTextureCoords ) );
-	memset( mColors, 0, sizeof( mColors ) );
+	memset(mFogTextureCoords, 0, sizeof(mFogTextureCoords));
 
 	for (i = 0; i < SHADER_MAX_VERTEXES; i += 4)
 	{
@@ -70,30 +63,62 @@ CQuickSpriteSystem::CQuickSpriteSystem() :
 	}
 }
 
-CQuickSpriteSystem::~CQuickSpriteSystem(void)
+CQuickSpriteSystem::~CQuickSpriteSystem()
 {
+
 }
 
-void CQuickSpriteSystem::Flush(void)
+void CQuickSpriteSystem::Flush( void )
 {
-	if (mNextVert==0)
-	{
+	if (tess.numIndexes == 0)
 		return;
+
+	vk_select_texture(0);
+	R_BindAnimatedImage(mTexBundle);
+
+	tess.svars.texcoordPtr[0] = mTextureCoords;
+	
+	vk_bind_pipeline(vk_pipeline);
+	vk_bind_index();
+	vk_bind_geometry(TESS_XYZ | TESS_RGBA0 | TESS_ST0);
+	vk_draw_geometry(DEPTH_RANGE_NORMAL, qtrue);
+
+	//only for software fog pass (global soft/volumetric) -rww
+	//if (mUseFog && (r_drawfog->integer != 2 || mFogIndex != tr.world->globalFog))
+
+	// surface sprite fogs are rendered without fog collapse
+	if (mUseFog)
+	{
+		uint32_t pipeline = vk.std_pipeline.fog_pipelines[0][tess.shader->fogPass - 1][2][tess.shader->polygonOffset];
+		const fog_t *fog;
+		int			i;
+
+		fog = tr.world->fogs + mFogIndex;
+
+		for (i = 0; i < tess.numVertexes; i++) {
+			*(int*)&tess.svars.colors[0][i] = fog->colorInt;
+		}
+
+		RB_CalcFogTexCoords((float*)mFogTextureCoords);
+		tess.svars.texcoordPtr[0] = mFogTextureCoords;
+
+		vk_bind(tr.fogImage);
+		vk_bind_pipeline(pipeline);
+		vk_bind_geometry(TESS_ST0 | TESS_RGBA0);
+		vk_draw_geometry(DEPTH_RANGE_NORMAL, qtrue);
 	}
 
-	// TODO(M7): surface sprites were drawn as immediate client-state quads
-	// (GL_QUADS + glLockArraysEXT); port to indexed triangles through the
-	// streaming buffer (plan sections 1.3 and 1.6, tr_quicksprite).
-	mNextVert = 0;
+	tess.numVertexes = 0;
+	tess.numIndexes = 0;
 }
 
-
-void CQuickSpriteSystem::StartGroup(textureBundle_t *bundle, uint32_t glbits, int fogIndex )
+void CQuickSpriteSystem::StartGroup( const textureBundle_t *bundle, uint32_t pipeline, int fogIndex )
 {
-	mNextVert = 0;
+	tess.numVertexes = 0;
+	tess.numIndexes = 0;
 
+	vk_pipeline = pipeline;
 	mTexBundle = bundle;
-	mGLStateBits = glbits;
 	if (fogIndex != -1)
 	{
 		mUseFog = qtrue;
@@ -103,62 +128,45 @@ void CQuickSpriteSystem::StartGroup(textureBundle_t *bundle, uint32_t glbits, in
 	{
 		mUseFog = qfalse;
 	}
-
-	int cullingOn;
-	qglGetIntegerv(GL_CULL_FACE,&cullingOn);
-
-	if(cullingOn)
-	{
-		mTurnCullBackOn=qtrue;
-	}
-	else
-	{
-		mTurnCullBackOn=qfalse;
-	}
-	qglDisable(GL_CULL_FACE);
 }
 
-
-void CQuickSpriteSystem::EndGroup(void)
+void CQuickSpriteSystem::EndGroup( void )
 {
 	Flush();
 
-	// TODO(M3): fixed-function current color is gone; vertex colors come
-	// from the tess buffer in ES3.
-	if(mTurnCullBackOn)
-	{
-		qglEnable(GL_CULL_FACE);
-	}
+	//qglColor4ub(255,255,255,255);
 }
 
-
-
-
-void CQuickSpriteSystem::Add(float *pointdata, color4ub_t color, vec2_t fog)
+void CQuickSpriteSystem::Add( float *pointdata, color4ub_t color, vec2_t fog )
 {
 	float *curcoord;
 	float *curfogtexcoord;
-	uint32_t *curcolor;
+	uint32_t i;
 
-	if (mNextVert>SHADER_MAX_VERTEXES-4)
-	{
+	if (tess.numVertexes > SHADER_MAX_VERTEXES - 4)
 		Flush();
-	}
 
-	curcoord = mVerts[mNextVert];
+	curcoord = tess.xyz[tess.numVertexes];
 	// This is 16*sizeof(float) because, pointdata comes from a float[16]
-	memcpy(curcoord, pointdata, 16*sizeof(float));
+	memcpy(curcoord, pointdata, 16 * sizeof(float));
 
 	// Set up color
-	curcolor = &mColors[mNextVert];
-	*curcolor++ = *(uint32_t *)color;
-	*curcolor++ = *(uint32_t *)color;
-	*curcolor++ = *(uint32_t *)color;
-	*curcolor++ = *(uint32_t *)color;
+	for (i = 0; i < 4; i++) {
+		memcpy(tess.svars.colors[0][tess.numVertexes + i], color, sizeof(color4ub_t));
+	}
+
+	for (i = 0; i < 6; i++) {
+		tess.indexes[tess.numIndexes] = tess.numVertexes;
+		tess.indexes[tess.numIndexes + 1] = tess.numVertexes + 1;
+		tess.indexes[tess.numIndexes + 2] = tess.numVertexes + 3;
+		tess.indexes[tess.numIndexes + 3] = tess.numVertexes + 3;
+		tess.indexes[tess.numIndexes + 4] = tess.numVertexes + 1;
+		tess.indexes[tess.numIndexes + 5] = tess.numVertexes + 2;
+	}
 
 	if (fog)
 	{
-		curfogtexcoord = &mFogTextureCoords[mNextVert][0];
+		curfogtexcoord = &mFogTextureCoords[tess.numVertexes][0];
 		*curfogtexcoord++ = fog[0];
 		*curfogtexcoord++ = fog[1];
 
@@ -171,12 +179,13 @@ void CQuickSpriteSystem::Add(float *pointdata, color4ub_t color, vec2_t fog)
 		*curfogtexcoord++ = fog[0];
 		*curfogtexcoord++ = fog[1];
 
-		mUseFog=qtrue;
+		mUseFog = qtrue;
 	}
 	else
 	{
-		mUseFog=qfalse;
+		mUseFog = qfalse;
 	}
 
-	mNextVert+=4;
+	tess.numVertexes += 4;
+	tess.numIndexes += 6;
 }

@@ -1032,13 +1032,11 @@ public:
 
 		// Create The Image
 		//------------------
-		mImage = R_FindImageFile(texturePath, qfalse, qfalse, qfalse, GL_CLAMP);
+		mImage = R_FindImageFile(texturePath, IMGFLAG_CLAMPTOEDGE);
 		if (!mImage)
 		{
 			Com_Error(ERR_DROP, "CParticleCloud: Could not texture %s", texturePath);
 		}
-
-		GL_Bind(mImage);
 
 
 
@@ -1060,9 +1058,7 @@ public:
 		}
 
 		mVertexCount = VertexCount;
-		// TODO(M7): GL_QUADS has no ES3 equivalent; quads are emitted as
-		// two indexed triangles from the tess buffer.
-		mGLModeEnum = GL_TRIANGLES;
+		mGLModeEnum = (mVertexCount==3)?(GL_TRIANGLES):(GL_QUADS);
 	}
 
 
@@ -1430,10 +1426,11 @@ public:
 	////////////////////////////////////////////////////////////////////////////////////
 	void		Render()
 	{
-		// TODO(M7): weather particles were drawn with immediate mode
-		// (GL_TRIANGLES/GL_QUADS + fixed-function color); the CPU particle
+		// TODO: weather particles were drawn with immediate mode GL
+		// (qglBegin/qglVertex + fixed-function state); the CPU particle
 		// state in this class is preserved, emission moves into the tess
-		// buffer as indexed triangles (plan sections 1.6 and M7).
+		// buffer as indexed triangles (like rd-gles3).
+		mParticlesRendered += mParticleCountRender;
 	}
 };
 ratl::vector_vs<CParticleCloud, MAX_PARTICLE_CLOUDS>	mParticleClouds;
@@ -1481,8 +1478,10 @@ void RB_RenderWorldEffects(void)
 		return;
 	}
 
-	SetViewportAndScissor();
-	// TODO(M3): world modelview -> shader uniform (CPU MVP).
+	// TODO(V2.5): Vulkan sets viewport/scissor via pipeline state; the
+	// legacy SetViewportAndScissor() fixed-function reset does not exist
+	// here. Revisit together with particle cloud rendering.
+	// SetViewportAndScissor();
 
 
 	// Calculate Elapsed Time For Scale Purposes

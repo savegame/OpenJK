@@ -98,13 +98,13 @@ int G2_Add_Bone (const model_t *mod, boneInfo_v &blist, const char *boneName)
 	memset(&tempBone, 0, sizeof(tempBone));
 	//rww - RAGDOLL_END
 
-   	offsets = (mdxaSkelOffsets_t *)((byte *)mod->mdxa + sizeof(mdxaHeader_t));
+   	offsets = (mdxaSkelOffsets_t *)((byte *)mod->data.gla + sizeof(mdxaHeader_t));
 
  	// walk the entire list of bones in the gla file for this model and see if any match the name of the bone we want to find
 	int x;
- 	for (x=0; x< mod->mdxa->numBones; x++)
+ 	for (x=0; x< mod->data.gla->numBones; x++)
  	{
- 		skel = (mdxaSkel_t *)((byte *)mod->mdxa + sizeof(mdxaHeader_t) + offsets->offsets[x]);
+ 		skel = (mdxaSkel_t *)((byte *)mod->data.gla + sizeof(mdxaHeader_t) + offsets->offsets[x]);
  		// if name is the same, we found it
  		if (!Q_stricmp(skel->name, boneName))
 		{
@@ -113,7 +113,7 @@ int G2_Add_Bone (const model_t *mod, boneInfo_v &blist, const char *boneName)
 	}
 
 	// check to see we did actually make a match with a bone in the model
-	if (x == mod->mdxa->numBones)
+	if (x == mod->data.gla->numBones)
 	{
 #if _DEBUG
 		G2_Bone_Not_Found(boneName,mod->name);
@@ -127,7 +127,7 @@ int G2_Add_Bone (const model_t *mod, boneInfo_v &blist, const char *boneName)
 		// if this bone entry has info in it, bounce over it
 		if (blist[i].boneNumber != -1)
 		{
-			skel = (mdxaSkel_t *)((byte *)mod->mdxa + sizeof(mdxaHeader_t) + offsets->offsets[blist[i].boneNumber]);
+			skel = (mdxaSkel_t *)((byte *)mod->data.gla + sizeof(mdxaHeader_t) + offsets->offsets[blist[i].boneNumber]);
 			// if name is the same, we found it
 			if (!Q_stricmp(skel->name, boneName))
 			{
@@ -321,8 +321,8 @@ void G2_Generate_Matrix(const model_t *mod, boneInfo_v &blist, int index, const 
 		Create_Matrix(newAngles, boneOverride);
 
 		// figure out where the bone hirearchy info is
-		offsets = (mdxaSkelOffsets_t *)((byte *)mod->mdxa + sizeof(mdxaHeader_t));
-		skel = (mdxaSkel_t *)((byte *)mod->mdxa + sizeof(mdxaHeader_t) + offsets->offsets[blist[index].boneNumber]);
+		offsets = (mdxaSkelOffsets_t *)((byte *)mod->data.gla + sizeof(mdxaHeader_t));
+		skel = (mdxaSkel_t *)((byte *)mod->data.gla + sizeof(mdxaHeader_t) + offsets->offsets[blist[index].boneNumber]);
 
 		Multiply_3x4Matrix(&temp1,  boneOverride,&skel->BasePoseMatInv);
 		Multiply_3x4Matrix(boneOverride,&skel->BasePoseMat, &temp1);
@@ -1183,9 +1183,9 @@ int G2_Find_Bone_Rag(CGhoul2Info *ghlInfo, boneInfo_v &blist, const char *boneNa
 
 	currentModel = R_GetModelByHandle(RE_RegisterModel(ghlInfo->mFileName));
 	assert(currentModel);
-	animModel =  R_GetModelByHandle(currentModel->mdxm->animIndex);
+	animModel =  R_GetModelByHandle(currentModel->data.glm->header->animIndex);
 	assert(animModel);
-	aHeader = animModel->mdxa;
+	aHeader = animModel->data.gla;
 	assert(aHeader);
 
    	offsets = (mdxaSkelOffsets_t *)((byte *)aHeader + sizeof(mdxaHeader_t));

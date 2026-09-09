@@ -195,7 +195,7 @@ int G2_Add_Bolt(CGhoul2Info *ghlInfo, boltInfo_v &bltlist, surfaceInfo_v &slist,
 	if (x == ghlInfo->aHeader->numBones)
 	{
 		// didn't find it? Error
-		//assert(0&&x == mod_a->mdxa->numBones);
+		//assert(0&&x == mod_a->data.gla->numBones);
 #if _DEBUG
 		G2_Bolt_Not_Found(boneName,ghlInfo->mFileName);
 #endif
