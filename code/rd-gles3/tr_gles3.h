@@ -40,6 +40,8 @@ typedef struct {
 	cullType_t		cull_type;		// CT_FRONT_SIDED / CT_BACK_SIDED / CT_TWO_SIDED
 	bool			mirror;			// flip cull face like vanilla GL_Cull did
 	bool			polygon_offset;
+	bool			mt;				// two texture units: t0 * t1 (lightmap on unit 1)
+	bool			mt_add;			// mt with GL_ADD-style combine: t0 + t1
 } g3_pipeline_def_t;
 
 void	g3_init( void );		// (re)initialize state cache, call after GL_SetDefaultState

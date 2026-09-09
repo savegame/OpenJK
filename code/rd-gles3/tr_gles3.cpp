@@ -101,17 +101,26 @@ static const char *g3_vertex_template =
 	"layout(location = 1) in vec4 in_color;\n"
 	"#if TEXTURED\n"
 	"layout(location = 2) in vec2 in_texcoord0;\n"
+	"#if MT\n"
+	"layout(location = 3) in vec2 in_texcoord1;\n"
+	"#endif\n"
 	"#endif\n"
 	"uniform mat4 u_mvp;\n"
 	"out vec4 v_color;\n"
 	"#if TEXTURED\n"
 	"out vec2 v_texcoord0;\n"
+	"#if MT\n"
+	"out vec2 v_texcoord1;\n"
+	"#endif\n"
 	"#endif\n"
 	"void main() {\n"
 	"	gl_Position = u_mvp * in_position;\n"
 	"	v_color = in_color;\n"
 	"#if TEXTURED\n"
 	"	v_texcoord0 = in_texcoord0;\n"
+	"#if MT\n"
+	"	v_texcoord1 = in_texcoord1;\n"
+	"#endif\n"
 	"#endif\n"
 	"}\n";
 
@@ -120,21 +129,35 @@ static const char *g3_fragment_template =
 	"in vec4 v_color;\n"
 	"#if TEXTURED\n"
 	"in vec2 v_texcoord0;\n"
+	"#if MT\n"
+	"in vec2 v_texcoord1;\n"
+	"#endif\n"
 	"uniform sampler2D u_texture0;\n"
+	"#if MT\n"
+	"uniform sampler2D u_texture1;\n"
+	"#endif\n"
 	"#endif\n"
 	"out vec4 out_color;\n"
 	"void main() {\n"
 	"#if TEXTURED\n"
 	"	vec4 c = texture(u_texture0, v_texcoord0) * v_color;\n"
+	"#if MT\n"
+	"	vec4 c1 = texture(u_texture1, v_texcoord1);\n"
+	"#if MT_ADD\n"
+	"	c = vec4(c.rgb + c1.rgb, c.a + c1.a);\n"
+	"#else\n"
+	"	c = c * c1;\n"
+	"#endif\n"
+	"#endif\n"
 	"#else\n"
 	"	vec4 c = v_color;\n"
 	"#endif\n"
-	"	// alpha test: 1 = GT_0 (keep a > 0), 2 = LT_80 (keep a < 0.5), 3 = GE_80 (keep a >= 0.5)\n"
+	"	// alpha test: 1 = GT_0, 2 = LT_80, 3 = GE_80, 4 = GE_C0 (values below)\n"
 	"#if ATEST_FUNC == 1\n"
 	"	if (c.a <= ATEST_VALUE) discard;\n"
 	"#elif ATEST_FUNC == 2\n"
 	"	if (c.a >= ATEST_VALUE) discard;\n"
-	"#elif ATEST_FUNC == 3\n"
+	"#elif ATEST_FUNC == 3 || ATEST_FUNC == 4\n"
 	"	if (c.a < ATEST_VALUE) discard;\n"
 	"#endif\n"
 	"	out_color = c;\n"
@@ -146,8 +169,18 @@ static int g3_atest_func_for_bits( uint32_t state_bits )
 		case GLS_ATEST_GT_0:	return 1;
 		case GLS_ATEST_LT_80:	return 2;
 		case GLS_ATEST_GE_80:	return 3;
-		case GLS_ATEST_GE_C0:	return 3; // TODO(M3): GE_C0 wants 0.75, separate variant
+		case GLS_ATEST_GE_C0:	return 4; // 0.75, used by RF_DISINTEGRATE1
 		default:		return 0;
+	}
+}
+
+static float g3_atest_value_for_func( int func )
+{
+	switch ( func ) {
+		case 2:		return 0.5f;	// LT_80: discard a >= 0.5
+		case 3:		return 0.5f;	// GE_80: discard a < 0.5
+		case 4:		return 0.75f;	// GE_C0: discard a < 0.75
+		default:	return 0.0f;	// GT_0: discard a <= 0.0
 	}
 }
 
@@ -155,24 +188,30 @@ static void g3_get_shader_sources( const g3_pipeline_def_t *def,
 		char *vs, size_t vs_size, char *fs, size_t fs_size )
 {
 	int atest_func = g3_atest_func_for_bits( def->state_bits );
-	float atest_value = ( atest_func == 1 ) ? 0.0f : 0.5f;
+	float atest_value = g3_atest_value_for_func( atest_func );
 	int textured = ( def->type == G3_PROG_TEXTURE ) ? 1 : 0;
+	int mt = ( textured && def->mt ) ? 1 : 0;
+	int mt_add = ( mt && def->mt_add ) ? 1 : 0;
 
 	Com_sprintf( vs, vs_size,
 		"#version 300 es\n"
 		"#define TEXTURED %d\n"
+		"#define MT %d\n"
+		"#define MT_ADD %d\n"
 		"#define ATEST_FUNC 0\n"
 		"#define ATEST_VALUE 0.0\n"
 		"%s",
-		textured, g3_vertex_template );
+		textured, mt, mt_add, g3_vertex_template );
 
 	Com_sprintf( fs, fs_size,
 		"#version 300 es\n"
 		"#define TEXTURED %d\n"
+		"#define MT %d\n"
+		"#define MT_ADD %d\n"
 		"#define ATEST_FUNC %d\n"
-		"#define ATEST_VALUE %.1f\n"
+		"#define ATEST_VALUE %.2f\n"
 		"%s",
-		textured, atest_func, atest_value, g3_fragment_template );
+		textured, mt, mt_add, atest_func, atest_value, g3_fragment_template );
 }
 
 static GLuint g3_compile_shader( GLenum type, const char *name, const char *src )
@@ -229,6 +268,8 @@ static GLuint g3_create_program( const g3_pipeline_def_t *def )
 	// sampler uniforms are program state in GL: set them once at creation
 	glUseProgram( prog );
 	glUniform1i( glGetUniformLocation( prog, "u_texture0" ), 0 );
+	if ( def->mt )
+		glUniform1i( glGetUniformLocation( prog, "u_texture1" ), 1 );
 	glUseProgram( 0 );
 
 	return prog;
@@ -646,7 +687,7 @@ static void g3_draw_commit( g3_program_t *prog, uint32_t indexOffset, int numInd
 void g3_draw_tess( const g3_pipeline_def_t *def, int numIndexes, const glIndex_t *indexes )
 {
 	g3_program_t *prog;
-	uint32_t off_xyz, off_color, off_tc0, off_indexes;
+	uint32_t off_xyz, off_color, off_tc0, off_tc1, off_indexes;
 	int i;
 
 	if ( numIndexes <= 0 )
@@ -665,8 +706,8 @@ void g3_draw_tess( const g3_pipeline_def_t *def, int numIndexes, const glIndex_t
 	// frame segment. Draws already submitted this frame keep referencing the
 	// previous (orphaned) storage, which is the standard orphaning idiom;
 	// uploaded is reset so the new segment is uploaded in full on flush.
-	if ( g3.geometry_offset + tess.numVertexes * ( 16 + 4 + 8 ) + numIndexes * 4 + 64 > g3.geometry_size ) {
-		g3_resize_geometry_buffer( g3_log2pad( g3.geometry_offset + tess.numVertexes * ( 16 + 4 + 8 ) + numIndexes * 4 + 64 ) );
+	if ( g3.geometry_offset + tess.numVertexes * ( 16 + 4 + 8 + 8 ) + numIndexes * 4 + 64 > g3.geometry_size ) {
+		g3_resize_geometry_buffer( g3_log2pad( g3.geometry_offset + tess.numVertexes * ( 16 + 4 + 8 + 8 ) + numIndexes * 4 + 64 ) );
 		g3_map_geometry_buffer();
 	}
 
@@ -690,14 +731,17 @@ void g3_draw_tess( const g3_pipeline_def_t *def, int numIndexes, const glIndex_t
 	}
 	off_color = g3_stream_write( tess.svars.colors, tess.numVertexes * sizeof( tess.svars.colors[0] ), 4 );
 	off_tc0 = g3_stream_write( tess.svars.texcoords[0], tess.numVertexes * sizeof( tess.svars.texcoords[0][0] ), 4 );
+	off_tc1 = ( def->mt ) ? g3_stream_write( tess.svars.texcoords[1], tess.numVertexes * sizeof( tess.svars.texcoords[1][0] ), 4 ) : ~0u;
 	off_indexes = g3_stream_write( indexes, numIndexes * sizeof( indexes[0] ), 4 );
-	if ( off_xyz == ~0u || off_color == ~0u || off_tc0 == ~0u || off_indexes == ~0u )
+	if ( off_xyz == ~0u || off_color == ~0u || off_tc0 == ~0u || off_tc1 == ~0u || off_indexes == ~0u )
 		return; // cannot happen: growth above guarantees space
 
 	g3.attr_pending = g3.attr_enabled;
 	g3_set_attr( 0, 4, GL_FLOAT, GL_FALSE, sizeof( tess.xyz[0] ), off_xyz );
 	g3_set_attr( 1, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof( tess.svars.colors[0] ), off_color );
 	g3_set_attr( 2, 2, GL_FLOAT, GL_FALSE, sizeof( tess.svars.texcoords[0][0] ), off_tc0 );
+	if ( def->mt )
+		g3_set_attr( 3, 2, GL_FLOAT, GL_FALSE, sizeof( tess.svars.texcoords[1][0] ), off_tc1 );
 
 	prog = g3_bind_pipeline( def );
 	g3_draw_commit( prog, off_indexes, numIndexes, GL_TRIANGLES, 0 );

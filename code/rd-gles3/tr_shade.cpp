@@ -44,36 +44,101 @@ bool		styleUpdated[MAX_LIGHT_STYLES];
 extern bool g_bRenderGlowingObjects;
 
 void R_BindAnimatedImage( const textureBundle_t *bundle );
+void ForceAlpha( unsigned char *dstColors, int TR_ForceEntAlpha );
 
 /*
 ** RB_EmitStage
 **
 ** Draw the current tess batch for one shader stage through the GLES3
-** streaming path: pipeline definition (state bits + cull + offset) ->
-** cached GLSL program, CPU-computed MVP, streamed vertex data.
-** TODO(M3): multitexture/lightmap bundle[1] combination, texture-env modes.
+** streaming path: pipeline definition (state bits + cull + offset +
+** multitexture combine) -> cached GLSL program, CPU-computed MVP, streamed
+** vertex data.
+**
+** This is the fixed-function DrawMultitextured/R_DrawElements pair of
+** rd-vanilla folded into a single entry (plan section 1.1):
+**  - bundle[1] present  -> two texture units (lightmap modulated or added)
+**  - r_lightmap         -> unit 1 env becomes GL_REPLACE in vanilla; here
+**                          the same visible result is produced with white on
+**                          unit 0, white vertex color and a modulate combine
+**  - RF_DISTORTION      -> bind the captured screen image (capture itself
+**                          is M7), draw two-sided
 ** TODO(M4): fog pass / fog collapse into the stage pipeline.
 */
-static void RB_EmitStage( shaderStage_t *pStage )
+static void RB_EmitStage( shaderStage_t *pStage, int stateBits )
 {
 	g3_pipeline_def_t def;
+	qboolean	mt, lmReplace, distortion;
 
 	memset( &def, 0, sizeof( def ) );
 	def.type = G3_PROG_TEXTURE;
-	def.state_bits = pStage->stateBits;
+	def.state_bits = stateBits;
 	def.cull_type = backEnd.projection2D ? CT_TWO_SIDED : tess.shader->cullType;
 	def.mirror = backEnd.viewParms.isMirror ? true : false;
 	def.polygon_offset = backEnd.projection2D ? false : tess.shader->polygonOffset;
 
-	GL_SelectTexture( 0 );
-	if ( pStage->bundle[0].image != NULL ||
-		 pStage->bundle[0].numImageAnimations > 0 ||
-		 pStage->bundle[0].isVideoMap ) {
-		R_BindAnimatedImage( &pStage->bundle[0] );
-	} else {
-		// stage without a texture (e.g. pure rgbGen color): bind white so a
-		// single textured program covers both cases
-		GL_Bind( tr.whiteImage );
+	// vanilla: if ( pStage->bundle[1].image != 0 ) -> DrawMultitextured
+	mt = ( pStage->bundle[1].image != NULL ||
+		   pStage->bundle[1].numImageAnimations > 0 ||
+		   pStage->bundle[1].isVideoMap ) ? qtrue : qfalse;
+
+	// vanilla DrawMultitextured: GL_TexEnv( GL_REPLACE ) on the lightmap
+	// unit when r_lightmap is set - show the raw lightmap
+	lmReplace = ( mt && r_lightmap->integer &&
+		( pStage->bundle[0].isLightmap || pStage->bundle[1].isLightmap ||
+		  pStage->bundle[0].vertexLightmap ) ) ? qtrue : qfalse;
+
+	distortion = ( !mt && !backEnd.projection2D &&
+		( tess.shader == tr.distortionShader ||
+		  ( backEnd.currentEntity && ( backEnd.currentEntity->e.renderfx & RF_DISTORTION ) ) ) )
+		? qtrue : qfalse;
+
+	if ( distortion )
+		def.cull_type = CT_TWO_SIDED;
+
+	if ( mt )
+	{
+		GL_SelectTexture( 0 );
+		if ( lmReplace ) {
+			GL_Bind( tr.whiteImage );
+		} else {
+			R_BindAnimatedImage( &pStage->bundle[0] );
+		}
+
+		GL_SelectTexture( 1 );
+		R_BindAnimatedImage( &pStage->bundle[1] );
+
+		GL_SelectTexture( 0 );
+
+		if ( lmReplace )
+			memset( tess.svars.colors, 0xff, tess.numVertexes * sizeof( tess.svars.colors[0] ) );
+
+		def.mt = true;
+		def.mt_add = ( !lmReplace && tess.shader->multitextureEnv == GL_ADD ) ? true : false;
+	}
+	else
+	{
+		GL_SelectTexture( 0 );
+		if ( distortion ) {
+			// tr.screenImage should have been set for this entity before we
+			// got in here (the capture itself is M7)
+			GL_Bind( tr.screenImage );
+		} else if ( pStage->bundle[0].vertexLightmap && ( r_vertexLight->integer ) && r_lightmap->integer ) {
+			GL_Bind( tr.whiteImage );
+		} else if ( pStage->bundle[0].image != NULL ||
+			 pStage->bundle[0].numImageAnimations > 0 ||
+			 pStage->bundle[0].isVideoMap ) {
+			R_BindAnimatedImage( &pStage->bundle[0] );
+		} else {
+			// stage without a texture (e.g. pure rgbGen color): bind white so a
+			// single textured program covers both cases
+			GL_Bind( tr.whiteImage );
+		}
+
+		if ( backEnd.currentEntity && ( backEnd.currentEntity->e.renderfx & RF_FORCE_ENT_ALPHA ) )
+		{
+			ForceAlpha( (unsigned char *) tess.svars.colors, backEnd.currentEntity->e.shaderRGBA[3] );
+			def.state_bits = GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA;
+		}
 	}
 
 	g3_draw_tess( &def, tess.numIndexes, tess.indexes );
@@ -231,14 +296,12 @@ output = t0 * t1 or t0 + t1
 
 t0 = most upstream according to spec
 t1 = most downstream according to spec
+
+Folded into RB_EmitStage above (M3): bundle[0] on unit 0, bundle[1]
+lightmap on unit 1, texenv modulate/add/r_lightmap-replace become the
+mt/mt_add flags of the pipeline definition.
 ===================
 */
-static void DrawMultitextured( shaderCommands_t *input, int stage ) {
-	// TODO(M3): multitexture collapse (lightmap on unit 1, texture env)
-	// becomes a multi-texture pipeline def bound from the streaming path
-	// (plan section 1.1).
-	(void)input; (void)stage;
-}
 
 //--EF_old dlight code...reverting back to Quake III dlight to see if people like that better
 // Lifted the whole function because someone hacked the heck out of this and it doesn't seem to
@@ -870,15 +933,37 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			continue;
 		}
 
+		int	stateBits = pStage->stateBits;
 		alphaGen_t	forceAlphaGen = (alphaGen_t)0;
 		colorGen_t	forceRGBGen = (colorGen_t)0;
 
+		// allow skipping out to show just lightmaps during development
+		if ( stage && r_lightmap->integer)
+		{
+			if ( !( pStage->bundle[0].isLightmap || pStage->bundle[1].isLightmap || pStage->bundle[0].vertexLightmap ) )
+			{
+				continue;	// need to keep going in case the LM is in a later stage
+			}
+			else
+			{
+				stateBits = (GLS_DSTBLEND_ZERO | GLS_SRCBLEND_ONE);	//we want to replace the prior stages with this LM, not blend
+			}
+		}
+
 		if ( backEnd.currentEntity )
 		{
+			if ( backEnd.currentEntity->e.renderfx & RF_DISINTEGRATE1 )
+			{
+				// we want to be able to rip a hole in the thing being disintegrated, and by doing the depth-testing it avoids some kinds of artefacts, but will probably introduce others?
+				//	NOTE: adjusting the alphaFunc seems to help a bit
+				stateBits = GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA | GLS_DEPTHMASK_TRUE | GLS_ATEST_GE_C0;
+			}
+
 			if ( backEnd.currentEntity->e.renderfx & RF_ALPHA_FADE )
 			{
 				if ( backEnd.currentEntity->e.shaderRGBA[3] < 255 )
 				{
+					stateBits = GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA;
 					forceAlphaGen = AGEN_ENTITY;
 				}
 			}
@@ -902,7 +987,7 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		ComputeTexCoords( pStage );
 
 		// emit the stage through the GLES3 streaming path
-		RB_EmitStage( pStage );
+		RB_EmitStage( pStage, stateBits );
 	}
 }
 

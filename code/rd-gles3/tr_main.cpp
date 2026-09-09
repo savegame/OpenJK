@@ -1510,6 +1510,17 @@ void R_RenderView (viewParms_t *parms) {
 	tr.viewParms.frameSceneNum = tr.frameSceneNum;
 	tr.viewParms.frameCount = tr.frameCount;
 
+	// TEMP(M3-debug)
+	{
+		static int dbgView;
+		if ( dbgView < 20 ) {
+			dbgView++;
+			ri.Printf( PRINT_ALL, "M3DBG RenderView: rdflags=0x%x vieworg=%.0f %.0f %.0f world=%p num_entities=%d\n",
+				tr.refdef.rdflags, parms->ori.origin[0], parms->ori.origin[1], parms->ori.origin[2],
+				(void*)tr.world, tr.refdef.num_entities );
+		}
+	}
+
 	firstDrawSurf = tr.refdef.numDrawSurfs;
 
 	tr.viewCount++;

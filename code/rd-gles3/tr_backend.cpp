@@ -401,6 +401,16 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	postRender_t	*pRender;
 	bool			didShadowPass = false;
 
+	// TEMP(M3-debug)
+	{
+		static int dbgList;
+		if ( dbgList < 20 ) {
+			dbgList++;
+			ri.Printf( PRINT_ALL, "M3DBG DrawSurfList: num=%d rdflags=0x%x projection2D=%d world=%p\n",
+				numDrawSurfs, backEnd.refdef.rdflags, backEnd.projection2D ? 1 : 0, (void*)tr.world );
+		}
+	}
+
 	if (g_bRenderGlowingObjects)
 	{ //only shadow on initial passes
 		didShadowPass = true;
