@@ -2287,7 +2287,8 @@ void RenderSurfaces(CRenderSurface &RS) //also ended up just ripping right from 
 			int		j;
 
 			// match the surface name to something in the skin file
-			shader = tr.defaultShader;
+			// (rd-vanilla falls back to the model's own shader, not default)
+			shader = R_GetShaderByHandle( surfInfo->shaderIndex );
 			for ( j = 0 ; j < RS.skin->numSurfaces ; j++ )
 			{
 				// the names have both been lowercased
@@ -3167,11 +3168,13 @@ void R_AddGhoulSurfaces( trRefEntity_t *ent ) {
 			{
 				cust_shader = NULL;
 				// figure out the custom skin thing
-				if (ghoul2[i].mCustomSkin)
-				{
-					skin = R_GetSkinByHandle(ghoul2[i].mCustomSkin );
-				}
-				else if (ent->e.customSkin)
+				// rd-vanilla (SP) order: ent->e.customSkin first, then mSkin.
+				// ghoul2[i].mCustomSkin is the G2API_SetSkin renderSkin handle
+				// and is consumed only by G2API_SetSurfaceOnOffFromSkin (*off
+				// lists) - vanilla never uses it for rendering. Preferring it
+				// here paired the *off skin with the model and every surface
+				// fell back to defaultShader (dark, untextured characters).
+				if (ent->e.customSkin)
 				{
 					skin = R_GetSkinByHandle(ent->e.customSkin );
 				}
@@ -4285,9 +4288,15 @@ qboolean R_LoadMDXM( model_t *mod, void *buffer, const char *mod_name, qboolean 
 
 	if (bAlreadyFound)
 	{
+		// SP dead window: the first load may have happened while the renderer
+		// state was memset (R_FindShader answered NULL, shaderIndex left at 0).
+		// Replay the stored shader requests now - rd-vanilla does the same for
+		// cached models (RE_RegisterModels_GetDiskFile).
+		CModelCache->AllocateShaders( mod_name );
+
 #ifdef USE_VBO_GHOUL2
-		// hotfix, returning here, results in an invalid vbo mesh pointer. 
-		// test using model kyle 
+		// hotfix, returning here, results in an invalid vbo mesh pointer.
+		// test using model kyle
 		if ( !vk.vboGhoul2Active )
 			return qtrue;	// All done. Stop, go no further, do not LittleLong(), do not pass Go...
 #else
@@ -4317,6 +4326,11 @@ qboolean R_LoadMDXM( model_t *mod, void *buffer, const char *mod_name, qboolean 
 			surfInfo->name[strlen(surfInfo->name)-4]=0;	//remove "_off" from name
 		}
 
+		if ( surfInfo->shader[0] == '[' )
+		{
+			surfInfo->shader[0] = 0;	//kill the stupid [nomaterial] since carcass doesn't
+		}
+
 		// do all the children indexs
 		for (j=0; j<surfInfo->numChildren; j++)
 		{
@@ -4327,7 +4341,11 @@ qboolean R_LoadMDXM( model_t *mod, void *buffer, const char *mod_name, qboolean 
 		// get the shader name
 		sh = R_FindShader( surfInfo->shader, lightmapsNone, stylesDefault, qtrue );
 		if ( sh == NULL )
-		{	// TODO(V2.x): root-cause NULL from R_FindShader during glm load
+		{	// dead window after Hunk_Clear/memset tr: renderer state is gone,
+			// R_FindShader answers NULL. Keep shaderIndex 0 for now, but still
+			// record the request so AllocateShaders can re-resolve it on the
+			// post-R_Init re-registration (like rd-vanilla replays its stored
+			// shader requests for cached models).
 			ri.Printf( PRINT_ALL, S_COLOR_YELLOW "R_LoadMDXM: NULL shader for '%s' (model %s)\n", surfInfo->shader, mod_name );
 			surfInfo->shaderIndex = 0;
 		}
@@ -4341,8 +4359,9 @@ qboolean R_LoadMDXM( model_t *mod, void *buffer, const char *mod_name, qboolean 
 			surfInfo->shaderIndex = sh->index;
 		}
 
-		if ( sh != NULL )
-			CModelCache->StoreShaderRequest(mod_name, &surfInfo->shader[0], &surfInfo->shaderIndex);
+		// Always record the request: on a cache hit AllocateShaders replays it,
+		// which is what keeps shaderIndex valid across the SP dead window.
+		CModelCache->StoreShaderRequest(mod_name, &surfInfo->shader[0], &surfInfo->shaderIndex);
 
 #ifdef Q3_BIG_ENDIAN
 		// swap the surface offset

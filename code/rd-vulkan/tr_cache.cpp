@@ -335,6 +335,11 @@ void CModelCacheManager::AllocateShaders( const char *psFileName )
 		int  *piShaderPokePtr	= (int *)((char*)file->pDiskImage + shader.pokeOffset);
 
 		shader_t *sh = R_FindShader(psShaderName, lightmapsNone, stylesDefault, qtrue);
+		if ( sh == NULL )
+		{	// SP dead window (renderer state memset): leave the poke alone,
+			// a later replay after R_Init will resolve it.
+			continue;
+		}
 		if ( sh->defaultShader )
 			*piShaderPokePtr = 0;
 		else
