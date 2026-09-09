@@ -519,7 +519,7 @@ static bool ParseSurfaceSprites( const char *_text, shaderStage_t *stage )
 
 	if (!stage->ss)
 	{
-		stage->ss = (surfaceSprite_t*)Hunk_Alloc(sizeof(surfaceSprite_t), qtrue);
+		stage->ss = (surfaceSprite_t*)R_Hunk_Alloc(sizeof(surfaceSprite_t), qtrue);
 	}
 
 	// These are all set by the command lines.
@@ -582,7 +582,7 @@ static bool ParseSurfaceSpritesOptional( const char *param, const char *_text, s
 
 	if (!stage->ss)
 	{
-		stage->ss = (surfaceSprite_t*)Hunk_Alloc(sizeof(surfaceSprite_t), qtrue);
+		stage->ss = (surfaceSprite_t*)R_Hunk_Alloc(sizeof(surfaceSprite_t), qtrue);
 	}
 	//
 	// fademax
@@ -1699,7 +1699,7 @@ static qboolean ParseStage(shaderStage_t *stage, const char **text)
 			}
 			else if (!Q_stricmp(token, "vector"))
 			{
-				stage->bundle[0].tcGenVectors = (vec3_t*)Hunk_Alloc(2 * sizeof(vec3_t), qtrue);
+				stage->bundle[0].tcGenVectors = (vec3_t*)R_Hunk_Alloc(2 * sizeof(vec3_t), qtrue);
 				ParseVector(text, 3, stage->bundle[0].tcGenVectors[0]);
 				ParseVector(text, 3, stage->bundle[0].tcGenVectors[1]);
 
@@ -1914,7 +1914,7 @@ static void ParseDeform( const char **text ) {
 		return;
 	}
 
-	shader.deforms[shader.numDeforms] = (deformStage_t*)Hunk_Alloc(sizeof(deformStage_t), qtrue);
+	shader.deforms[shader.numDeforms] = (deformStage_t*)R_Hunk_Alloc(sizeof(deformStage_t), qtrue);
 
 	ds = shader.deforms[shader.numDeforms];
 	shader.numDeforms++;
@@ -2059,7 +2059,7 @@ static void ParseSkyParms( const char **text ) {
 		imgFlags |= IMGFLAG_NO_COMPRESSION;
 	}
 
-	shader.sky = (skyParms_t*)Hunk_Alloc(sizeof(skyParms_t), qtrue);
+	shader.sky = (skyParms_t*)R_Hunk_Alloc(sizeof(skyParms_t), qtrue);
 
 	// outerbox
 	token = COM_ParseExt(text, qfalse);
@@ -2592,7 +2592,7 @@ static qboolean ParseShader( const char **text )
 		// fogParms
 		else if (!Q_stricmp(token, "fogParms"))
 		{
-			shader.fogParms = (fogParms_t*)Hunk_Alloc(sizeof(fogParms_t), qtrue);
+			shader.fogParms = (fogParms_t*)R_Hunk_Alloc(sizeof(fogParms_t), qtrue);
 			if (!ParseVector(text, 3, shader.fogParms->color)) {
 				return qfalse;
 			}
@@ -3140,6 +3140,14 @@ shader_t *R_FindShader( const char *name, const int *lightmapIndex, const byte *
 	image_t		*image;
 	shader_t	*sh;
 	
+	// SP: after Hunk_Clear/R_ClearStuffToStopGhoul2CrashingThings the renderer
+	// is dead until RE_BeginRegistration re-inits it; jagame may register
+	// models in that window. Answer NULL like vanilla expects (its glm loader
+	// skips such surfaces) instead of walking freed shader memory.
+	if ( tr.defaultShader == NULL ) {
+		return NULL;
+	}
+
 	if (name[0] == '\0') {
 		return tr.defaultShader;
 	}

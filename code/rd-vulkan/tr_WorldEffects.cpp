@@ -1478,7 +1478,10 @@ void RB_RenderWorldEffects(void)
 		return;
 	}
 
-	SetViewportAndScissor();
+	// TODO(V2.5): Vulkan sets viewport/scissor via pipeline state; the
+	// legacy SetViewportAndScissor() fixed-function reset does not exist
+	// here. Revisit together with particle cloud rendering.
+	// SetViewportAndScissor();
 
 
 	// Calculate Elapsed Time For Scale Purposes

@@ -98,6 +98,11 @@ void *R_Hunk_Alloc( int iSize, qboolean bZeroit ) {
 	return ri.Malloc( iSize, TAG_HUNKALLOC, bZeroit, 4 );
 }
 
+// SP refimport has no parse-line hook; used only for shader warning logs.
+int COM_GetCurrentParseLine( void ) {
+	return 0;
+}
+
 // ZONE
 // These definitions intentionally match the prototypes already declared in
 // SP qcommon.h; the bodies route through the SP refimport instead of the

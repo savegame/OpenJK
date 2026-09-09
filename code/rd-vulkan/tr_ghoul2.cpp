@@ -1095,7 +1095,7 @@ void G2_CreateMatrixFromQuaterion(mdxaBone_t *mat, vec4_t quat)
 }
 
 // nasty little matrix multiply going on here..
-void Multiply_3x4Matrix(mdxaBone_t *out, mdxaBone_t *in2, mdxaBone_t *in)
+void Multiply_3x4Matrix(mdxaBone_t *out, const mdxaBone_t *in2, const mdxaBone_t *in)
 {
 	// first row of out
 	out->matrix[0][0] = (in2->matrix[0][0] * in->matrix[0][0]) + (in2->matrix[0][1] * in->matrix[1][0]) + (in2->matrix[0][2] * in->matrix[2][0]);
@@ -1112,6 +1112,47 @@ void Multiply_3x4Matrix(mdxaBone_t *out, mdxaBone_t *in2, mdxaBone_t *in)
 	out->matrix[2][1] = (in2->matrix[2][0] * in->matrix[0][1]) + (in2->matrix[2][1] * in->matrix[1][1]) + (in2->matrix[2][2] * in->matrix[2][1]);
 	out->matrix[2][2] = (in2->matrix[2][0] * in->matrix[0][2]) + (in2->matrix[2][1] * in->matrix[1][2]) + (in2->matrix[2][2] * in->matrix[2][2]);
 	out->matrix[2][3] = (in2->matrix[2][0] * in->matrix[0][3]) + (in2->matrix[2][1] * in->matrix[1][3]) + (in2->matrix[2][2] * in->matrix[2][3]) + in2->matrix[2][3];
+}
+
+// SP-only entry (called from G2_API.cpp G2API_SetSkin): port of rd-vanilla
+// tr_ghoul2.cpp implementation.
+void G2API_SetSurfaceOnOffFromSkin (CGhoul2Info *ghlInfo, qhandle_t renderSkin)
+{
+	int j;
+	const skin_t	*skin;
+
+	// SP: in the dead window after Hunk_Clear (renderer memset, shaders and
+	// skins freed) skin data is unusable; vanilla effectively skips this too
+	// (its R_GetSkinByHandle yields NULL there and it returns early).
+	if ( tr.defaultShader == NULL )
+		return;
+
+	skin = R_GetSkinByHandle( renderSkin );
+	//FIXME:  using skin handles means we have to increase the numsurfs in a skin, but reading directly would cause file hits, we need another way to cache or just deal with the larger skin_t
+
+	if (skin)
+	{
+		ghlInfo->mSlist.clear();	//remove any overrides we had before.
+		ghlInfo->mMeshFrameNum = 0;
+		for ( j = 0 ; j < skin->numSurfaces ; j++ )
+		{
+			uint32_t flags;
+			int surfaceNum = G2_IsSurfaceLegal(ghlInfo->currentModel, skin->surfaces[j]->name, &flags);
+			// the names have both been lowercased
+			if ( !(flags&G2SURFACEFLAG_OFF) && !strcmp( skin->surfaces[j]->shader->name , "*off") )
+			{
+				G2_SetSurfaceOnOff(ghlInfo, skin->surfaces[j]->name, G2SURFACEFLAG_OFF);
+			}
+			else
+			{
+				//if ( strcmp( &skin->surfaces[j]->name[strlen(skin->surfaces[j]->name)-4],"_off") )
+				if ( (surfaceNum != -1) && (!(flags&G2SURFACEFLAG_OFF)) )	//only turn on if it's not an "_off" surface
+				{
+					//G2_SetSurfaceOnOff(ghlInfo, skin->surfaces[j]->name, 0);
+				}
+			}
+		}
+	}
 }
 
 
@@ -4258,8 +4299,13 @@ qboolean R_LoadMDXM( model_t *mod, void *buffer, const char *mod_name, qboolean 
 		shader_t	*sh;
 		// get the shader name
 		sh = R_FindShader( surfInfo->shader, lightmapsNone, stylesDefault, qtrue );
+		if ( sh == NULL )
+		{	// TODO(V2.x): root-cause NULL from R_FindShader during glm load
+			ri.Printf( PRINT_ALL, S_COLOR_YELLOW "R_LoadMDXM: NULL shader for '%s' (model %s)\n", surfInfo->shader, mod_name );
+			surfInfo->shaderIndex = 0;
+		}
 		// insert it in the surface list
-		if ( sh->defaultShader )
+		else if ( sh->defaultShader )
 		{
 			surfInfo->shaderIndex = 0;
 		}
@@ -4268,7 +4314,8 @@ qboolean R_LoadMDXM( model_t *mod, void *buffer, const char *mod_name, qboolean 
 			surfInfo->shaderIndex = sh->index;
 		}
 
-		CModelCache->StoreShaderRequest(mod_name, &surfInfo->shader[0], &surfInfo->shaderIndex);
+		if ( sh != NULL )
+			CModelCache->StoreShaderRequest(mod_name, &surfInfo->shader[0], &surfInfo->shaderIndex);
 
 #ifdef Q3_BIG_ENDIAN
 		// swap the surface offset
