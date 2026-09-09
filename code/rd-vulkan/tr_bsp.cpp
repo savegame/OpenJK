@@ -521,8 +521,8 @@ static shader_t *ShaderForShaderNum( int shaderNum, const int *lightmapNum, cons
 
 	shader = R_FindShader( dsh->shader, lightmapNum, styles, qtrue );
 
-	// if the shader had errors, just use default shader
-	if ( shader->defaultShader ) {
+	// if the shader had errors (or dead SP window: NULL), just use default shader
+	if ( !shader || shader->defaultShader ) {
 		return tr.defaultShader;
 	}
 
@@ -2053,8 +2053,8 @@ static	void R_LoadFogs( const lump_t *l, const lump_t *brushesLump, lump_t *side
 		shader = R_FindShader( fogs->shader, lightmaps, stylesDefault, qtrue );
 
 
-		if (!shader->fogParms)
-		{//bad shader!!
+		if (!shader || !shader->fogParms)
+		{//bad shader (or dead SP window)!!
 			assert(shader->fogParms);
 			out->parms.color[0] = 1.0f;
 			out->parms.color[1] = 0.0f;

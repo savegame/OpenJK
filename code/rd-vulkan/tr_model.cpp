@@ -530,7 +530,7 @@ static qboolean R_LoadMD3 ( model_t *mod, int lod, void *buffer, const char *mod
 			shader_t       *sh;
 
 			sh = R_FindShader(md3Shader->name, lightmapsNone, stylesDefault, qtrue);
-			if(sh->defaultShader)
+			if(!sh || sh->defaultShader)	// SP dead window: R_FindShader may return NULL (vanilla lacks the guard by luck)
 			{
 				*shaderIndex = 0;
 			}

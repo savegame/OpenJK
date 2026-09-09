@@ -1836,10 +1836,12 @@ void G2API_SetGhoul2ModelIndexes(CGhoul2Info_v &ghoul2, qhandle_t *modelList, qh
 char *G2API_GetAnimFileNameIndex(qhandle_t modelIndex)
 {
 	model_t		*mod_m = R_GetModelByHandle(modelIndex);
-	G2ERROR(mod_m&&mod_m->data.glm->header,"Bad Model");
-	if (mod_m&&mod_m->data.glm->header)
+	// SP: bolted-on MD3 models (type != MOD_MDXM) have no glm data
+	mdxmData_t	*glm = ( mod_m && mod_m->type == MOD_MDXM ) ? mod_m->data.glm : NULL;
+	G2ERROR(glm&&glm->header,"Bad Model");
+	if (glm&&glm->header)
 	{
-		return mod_m->data.glm->header->animName;
+		return glm->header->animName;
 	}
 	return "";
 }
@@ -2222,17 +2224,18 @@ bool G2_TestModelPointers(CGhoul2Info *ghlInfo) // returns true if the model is 
 		ghlInfo->currentModel = R_GetModelByHandle(ghlInfo->mModel);
 		if (ghlInfo->currentModel)
 		{
-			if (ghlInfo->currentModel->data.glm->header)
+			mdxmData_t *glm = ( ghlInfo->currentModel->type == MOD_MDXM ) ? ghlInfo->currentModel->data.glm : NULL;
+			if (glm && glm->header)
 			{
 				if (ghlInfo->currentModelSize)
 				{
-					if (ghlInfo->currentModelSize!=ghlInfo->currentModel->data.glm->header->ofsEnd)
+					if (ghlInfo->currentModelSize!=glm->header->ofsEnd)
 					{
 						Com_Error(ERR_DROP, "Ghoul2 model was reloaded and has changed, map must be restarted.\n");
 					}
 				}
-				ghlInfo->currentModelSize=ghlInfo->currentModel->data.glm->header->ofsEnd;
-				ghlInfo->animModel =  R_GetModelByHandle(ghlInfo->currentModel->data.glm->header->animIndex + ghlInfo->animModelIndexOffset);
+				ghlInfo->currentModelSize=glm->header->ofsEnd;
+				ghlInfo->animModel =  R_GetModelByHandle(glm->header->animIndex + ghlInfo->animModelIndexOffset);
 				if (ghlInfo->animModel)
 				{
 					ghlInfo->aHeader =ghlInfo->animModel->data.gla;
@@ -2282,20 +2285,21 @@ bool G2_SetupModelPointers(CGhoul2Info *ghlInfo) // returns true if the model is
 		G2ERROR(ghlInfo->currentModel,va("NULL Model (glm) %s",ghlInfo->mFileName));
 		if (ghlInfo->currentModel)
 		{
-			G2ERROR(ghlInfo->currentModel->data.glm->header,va("Model has no mdxm (glm) %s",ghlInfo->mFileName));
-			if (ghlInfo->currentModel->data.glm->header)
+			mdxmData_t *glm = ( ghlInfo->currentModel->type == MOD_MDXM ) ? ghlInfo->currentModel->data.glm : NULL;
+			G2ERROR(glm&&glm->header,va("Model has no mdxm (glm) %s",ghlInfo->mFileName));
+			if (glm && glm->header)
 			{
 				if (ghlInfo->currentModelSize)
 				{
-					if (ghlInfo->currentModelSize!=ghlInfo->currentModel->data.glm->header->ofsEnd)
+					if (ghlInfo->currentModelSize!=glm->header->ofsEnd)
 					{
 						Com_Error(ERR_DROP, "Ghoul2 model was reloaded and has changed, map must be restarted.\n");
 					}
 				}
-				ghlInfo->currentModelSize=ghlInfo->currentModel->data.glm->header->ofsEnd;
+				ghlInfo->currentModelSize=glm->header->ofsEnd;
 				G2ERROR(ghlInfo->currentModelSize,va("Zero sized Model? (glm) %s",ghlInfo->mFileName));
 
-				ghlInfo->animModel =  R_GetModelByHandle(ghlInfo->currentModel->data.glm->header->animIndex + ghlInfo->animModelIndexOffset);
+				ghlInfo->animModel =  R_GetModelByHandle(glm->header->animIndex + ghlInfo->animModelIndexOffset);
 				G2ERROR(ghlInfo->animModel,va("NULL Model (gla) %s",ghlInfo->mFileName));
 				if (ghlInfo->animModel)
 				{
