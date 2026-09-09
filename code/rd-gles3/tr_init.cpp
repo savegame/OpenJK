@@ -29,6 +29,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "tr_local.h"
 #include "../rd-common/tr_common.h"
 #include "tr_stl.h"
+#include "tr_gles3.h"
 #include "../rd-common/tr_font.h"
 #include "tr_WorldEffects.h"
 
@@ -191,10 +192,45 @@ void RE_SetLightStyle(int style, int color);
 
 void R_Splash()
 {
-	// TODO(M2): draw the splash image through the shader-based 2D path
-	// (RB_SetGL2D + textured triangle strip); for M1 just clear to black.
-	qglClearColor( 0.0f, 0.0f, 0.0f, 1.0f );
-	qglClear( GL_COLOR_BUFFER_BIT );
+	image_t *pImage = R_FindImageFile( "menu/splash", qfalse, qfalse, qfalse, GL_CLAMP);
+
+	if ( !pImage )
+	{
+		// Can't find the splash image so just clear to black
+		qglClearColor( 0.0f, 0.0f, 0.0f, 1.0f );
+		qglClear( GL_COLOR_BUFFER_BIT );
+	}
+	else
+	{
+		extern void	RB_SetGL2D (void);
+		RB_SetGL2D();
+
+		GL_Bind( pImage );
+
+		const int width = 640;
+		const int height = 480;
+		const float x1 = 320 - width / 2;
+		const float x2 = 320 + width / 2;
+		const float y1 = 240 - height / 2;
+		const float y2 = 240 + height / 2;
+
+		const byte white[4] = { 255, 255, 255, 255 };
+		float xyz[4][4] = {
+			{ x1, y1, 0, 1 },
+			{ x2, y1, 0, 1 },
+			{ x1, y2, 0, 1 },
+			{ x2, y2, 0, 1 },
+		};
+		float tc[4][2] = {
+			{ 0, 0 }, { 1, 0 }, { 0, 1 }, { 1, 1 },
+		};
+		g3_pipeline_def_t def = {};
+		def.type = G3_PROG_TEXTURE;
+		def.state_bits = GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO;
+		def.cull_type = CT_TWO_SIDED;
+
+		g3_draw_arrays( &def, GL_TRIANGLE_STRIP, 4, &xyz[0][0], white, &tc[0][0] );
+	}
 
 	ri.WIN_Present( &window );
 }
@@ -473,9 +509,10 @@ Return value must be freed with Hunk_FreeTempMemory()
 
 byte *RB_ReadPixels(int x, int y, int width, int height, size_t *offset, int *padlen)
 {
-	byte *buffer, *bufstart;
+	byte *buffer, *bufstart, *rgba;
 	int padwidth, linelen;
 	GLint packAlign;
+	int row, col;
 
 	qglGetIntegerv(GL_PACK_ALIGNMENT, &packAlign);
 
@@ -486,7 +523,23 @@ byte *RB_ReadPixels(int x, int y, int width, int height, size_t *offset, int *pa
 	buffer = (byte *) R_Malloc(padwidth * height + *offset + packAlign - 1, TAG_TEMP_WORKSPACE, qfalse);
 
 	bufstart = (byte *)PADP((intptr_t) buffer + *offset, packAlign);
-	qglReadPixels(x, y, width, height, GL_RGB, GL_UNSIGNED_BYTE, bufstart);
+
+	// ES3 only guarantees RGBA (or BGRA with EXT_read_format_bgra) readback
+	// from the default framebuffer; GL_RGB raises GL_INVALID_OPERATION there.
+	// Read RGBA into a side buffer and repack into the RGB + row padding
+	// layout the callers expect.
+	rgba = (byte *) R_Malloc(width * height * 4, TAG_TEMP_WORKSPACE, qfalse);
+	qglReadPixels(x, y, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+	for ( row = 0; row < height; row++ ) {
+		byte *dst = bufstart + row * padwidth;
+		const byte *src = rgba + row * width * 4;
+		for ( col = 0; col < width; col++ ) {
+			dst[col * 3 + 0] = src[col * 4 + 0];
+			dst[col * 3 + 1] = src[col * 4 + 1];
+			dst[col * 3 + 2] = src[col * 4 + 2];
+		}
+	}
+	R_Free(rgba);
 
 	*offset = bufstart - buffer;
 	*padlen = padwidth - linelen;
@@ -807,7 +860,8 @@ void GL_SetDefaultState( void )
 	// TODO(M3): texture unit 1 setup moved to GL_TextureMode/GL_TexEnv stubs;
 	// texture-env state lives in the shader pipeline in ES3.
 
-	qglEnable(GL_TEXTURE_2D);
+	// no GL_TEXTURE_2D enable in ES3 (invalid cap; texturing is implicit
+	// in the shader program)
 	GL_TextureMode( r_textureMode->string );
 
 	// TODO(M3): shading is always smooth (no glShadeModel in ES3).
@@ -828,6 +882,9 @@ void GL_SetDefaultState( void )
 	qglDisable( GL_CULL_FACE );
 	qglDisable( GL_BLEND );
 	qglBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+
+	// initialize the GLES3 state cache and streaming backend baseline
+	g3_init();
 }
 
 

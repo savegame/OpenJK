@@ -100,6 +100,8 @@ if(BuildSPRdGLES3)
 		"${SPDir}/rd-gles3/tr_curve.cpp"
 		"${SPDir}/rd-gles3/tr_draw.cpp"
 		"${SPDir}/rd-gles3/tr_ghoul2.cpp"
+		"${SPDir}/rd-gles3/tr_gles3.cpp"
+		"${SPDir}/rd-gles3/tr_gles3.h"
 		"${SPDir}/rd-gles3/tr_image.cpp"
 		"${SPDir}/rd-gles3/tr_init.cpp"
 		"${SPDir}/rd-gles3/tr_light.cpp"
