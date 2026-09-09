@@ -4248,6 +4248,34 @@ qboolean R_LoadMDXM( model_t *mod, void *buffer, const char *mod_name, qboolean 
 	// first up, go load in the animation file we need that has the skeletal animation info for this model
 	mdxm->animIndex = RE_RegisterModel(va ("%s.gla",mdxm->animName));
 
+	// register the per-map cinematic GLA right after the base one, so that
+	// animIndex+1 (glaIndex 1 in the animation tables) resolves to it, like rd-vanilla
+	{
+		char	animGLAName[MAX_QPATH];
+		char	*strippedName;
+		char	*slash = NULL;
+		const char *mapname = sv_mapname->string;
+
+		if (strcmp(mapname, "nomap"))
+		{
+			if (strrchr(mapname, '/'))	// maps in subfolders use the root name (presuming only one level deep!)
+			{
+				mapname = strrchr(mapname, '/') + 1;
+			}
+			Q_strncpyz(animGLAName, mdxm->animName, sizeof(animGLAName));
+			slash = strrchr(animGLAName, '/');
+			if (slash)
+			{
+				*slash = 0;
+			}
+			strippedName = COM_SkipPath(animGLAName);
+			if (VALIDSTRING(strippedName))
+			{
+				RE_RegisterModel(va("models/players/%s_%s/%s_%s.gla", strippedName, mapname, strippedName, mapname));
+			}
+		}
+	}
+
 	if (!mdxm->animIndex)
 	{
 		ri.Printf( PRINT_ALL, S_COLOR_YELLOW  "R_LoadMDXM: missing animation file %s for mesh %s\n", mdxm->animName, mdxm->name);

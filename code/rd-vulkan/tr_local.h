@@ -1979,6 +1979,7 @@ extern	cvar_t	*r_noPrecacheGLA;
 #endif
 
 extern	cvar_t	*r_noServerGhoul2;
+extern	cvar_t	*sv_mapname;			// map name, "nomap" until a map is loaded
 /*
 Ghoul2 Insert End
 */
