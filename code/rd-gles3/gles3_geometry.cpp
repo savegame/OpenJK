@@ -50,6 +50,7 @@ along with OpenJK; if not, see <http://www.gnu.org/licenses/>.
 static float g_mvp[16];
 static ss_input ssInput;
 static qboolean g_mvp_valid = qfalse;
+static GLenum g_prim_mode = GL_TRIANGLES;
 
 void vk_select_texture( const int index )
 {
@@ -75,9 +76,11 @@ static void get_mvp_transform( float *mvp )
 		float mvp5 = 2.0f / SCREEN_HEIGHT;
 
 		mvp[0] = mvp0; mvp[1] = 0.0f; mvp[2] = 0.0f; mvp[3] = 0.0f;
-		mvp[4] = 0.0f; mvp[5] = mvp5; mvp[6] = 0.0f; mvp[7] = 0.0f;
-		mvp[8] = 0.0f; mvp[9] = 0.0f; mvp[10] = 1.0f; mvp[11] = 0.0f;
-		mvp[12] = -1.0f; mvp[13] = -1.0f; mvp[14] = 0.0f; mvp[15] = 1.0f;
+		// GL NDC y is up, virtual 2D screen y is down: flip (vk relied on viewport flip)
+		mvp[4] = 0.0f; mvp[5] = -mvp5; mvp[6] = 0.0f; mvp[7] = 0.0f;
+		// z_ndc = -1 (window depth 0, closest) so 2D passes LEQUAL vs the 1.0 clear
+		mvp[8] = 0.0f; mvp[9] = 0.0f; mvp[10] = 2.0f; mvp[11] = 0.0f;
+		mvp[12] = -1.0f; mvp[13] = 1.0f; mvp[14] = -1.0f; mvp[15] = 1.0f;
 	}
 	else
 	{
@@ -87,6 +90,18 @@ static void get_mvp_transform( float *mvp )
 
 		proj[5] = -p[5];
 		myGlMultMatrix(vk_world.modelview_transform, proj, mvp);
+
+		// The vk-style projection yields z_ndc in [0(near)..1(far)] for a
+		// [0..1] viewport (rd-vulkan: clear 1.0, LESS_OR_EQUAL). GL window
+		// depth is (z_ndc + 1) / 2, so expand z_clip' = 2*z_clip - w_clip to
+		// map the same convention onto the GL depth buffer: near -> 0, far -> 1.
+		{
+			const float w0 = mvp[3], w1 = mvp[7], w2 = mvp[11], w3 = mvp[15];
+			mvp[2]  = 2.0f * mvp[2]  - w0;
+			mvp[6]  = 2.0f * mvp[6]  - w1;
+			mvp[10] = 2.0f * mvp[10] - w2;
+			mvp[14] = 2.0f * mvp[14] - w3;
+		}
 	}
 }
 
@@ -295,6 +310,7 @@ uint32_t vk_tess_index( uint32_t numIndexes, const void *src )
 	glBufferSubData( GL_ELEMENT_ARRAY_BUFFER, offset, size, dst );
 
 	vk.cmd->num_indexes = numIndexes;
+	vk.cmd->index_offset = offset;
 
 	return offset;
 }
@@ -337,8 +353,7 @@ void vk_bind_geometry( uint32_t flags )
 	ptr = gles3_geometry_buffer_map( &g_geom.offset[ATTR_XYZ], xyz_size );
 	if ( ptr == NULL ) return;
 	Com_Memcpy( ptr, tess.xyz, xyz_size );
-	glBufferSubData( GL_ARRAY_BUFFER, XYZ_OFFSET + g_geom.offset[ATTR_XYZ], xyz_size, ptr );
-	g_geom.offset[ATTR_XYZ] += XYZ_OFFSET;
+	glBufferSubData( GL_ARRAY_BUFFER, g_geom.offset[ATTR_XYZ], xyz_size, ptr );
 	mask |= 1 << ATTR_XYZ;
 
 	// colors
@@ -349,20 +364,20 @@ void vk_bind_geometry( uint32_t flags )
 
 		if ( flags & TESS_RGBA0 ) {
 			Com_Memcpy( ptr, tess.svars.colors[0], color_size );
-			g_geom.offset[ATTR_COLOR0] = COLOR_OFFSET + off;
+			g_geom.offset[ATTR_COLOR0] = off;
 			mask |= 1 << ATTR_COLOR0;
 		}
 		if ( flags & TESS_RGBA1 ) {
 			Com_Memcpy( ptr + color_size, tess.svars.colors[1], color_size );
-			g_geom.offset[ATTR_COLOR1] = COLOR_OFFSET + off + color_size;
+			g_geom.offset[ATTR_COLOR1] = off + color_size;
 			mask |= 1 << ATTR_COLOR1;
 		}
 		if ( flags & TESS_RGBA2 ) {
 			Com_Memcpy( ptr + 2 * color_size, tess.svars.colors[2], color_size );
-			g_geom.offset[ATTR_COLOR2] = COLOR_OFFSET + off + 2 * color_size;
+			g_geom.offset[ATTR_COLOR2] = off + 2 * color_size;
 			mask |= 1 << ATTR_COLOR2;
 		}
-		glBufferSubData( GL_ARRAY_BUFFER, COLOR_OFFSET + off, 3 * color_size, ptr );
+		glBufferSubData( GL_ARRAY_BUFFER, off, 3 * color_size, ptr );
 	}
 
 	// texcoords
@@ -373,20 +388,20 @@ void vk_bind_geometry( uint32_t flags )
 
 		if ( flags & TESS_ST0 ) {
 			Com_Memcpy( ptr, tess.svars.texcoordPtr[0], st_size );
-			g_geom.offset[ATTR_ST0] = ST0_OFFSET + off;
+			g_geom.offset[ATTR_ST0] = off;
 			mask |= 1 << ATTR_ST0;
 		}
 		if ( flags & TESS_ST1 ) {
 			Com_Memcpy( ptr + st_size, tess.svars.texcoordPtr[1], st_size );
-			g_geom.offset[ATTR_ST1] = ST0_OFFSET + off + st_size;
+			g_geom.offset[ATTR_ST1] = off + st_size;
 			mask |= 1 << ATTR_ST1;
 		}
 		if ( flags & TESS_ST2 ) {
 			Com_Memcpy( ptr + 2 * st_size, tess.svars.texcoordPtr[2], st_size );
-			g_geom.offset[ATTR_ST2] = ST0_OFFSET + off + 2 * st_size;
+			g_geom.offset[ATTR_ST2] = off + 2 * st_size;
 			mask |= 1 << ATTR_ST2;
 		}
-		glBufferSubData( GL_ARRAY_BUFFER, ST0_OFFSET + off, 3 * st_size, ptr );
+		glBufferSubData( GL_ARRAY_BUFFER, off, 3 * st_size, ptr );
 	}
 
 	// normals
@@ -394,8 +409,7 @@ void vk_bind_geometry( uint32_t flags )
 		ptr = gles3_geometry_buffer_map( &g_geom.offset[ATTR_NORMAL], nnn_size );
 		if ( ptr == NULL ) return;
 		Com_Memcpy( ptr, tess.normal, nnn_size );
-		glBufferSubData( GL_ARRAY_BUFFER, NNN_OFFSET + g_geom.offset[ATTR_NORMAL], nnn_size, ptr );
-		g_geom.offset[ATTR_NORMAL] += NNN_OFFSET;
+		glBufferSubData( GL_ARRAY_BUFFER, g_geom.offset[ATTR_NORMAL], nnn_size, ptr );
 		mask |= 1 << ATTR_NORMAL;
 	}
 
@@ -419,8 +433,7 @@ void vk_bind_lighting( int stage, int bundle )
 	ptr = gles3_geometry_buffer_map( &g_geom.offset[ATTR_XYZ], numVertexes * sizeof(tess.xyz[0]) );
 	if ( ptr == NULL ) return;
 	Com_Memcpy( ptr, tess.xyz, numVertexes * sizeof(tess.xyz[0]) );
-	glBufferSubData( GL_ARRAY_BUFFER, XYZ_OFFSET + g_geom.offset[ATTR_XYZ], numVertexes * sizeof(tess.xyz[0]), ptr );
-	g_geom.offset[ATTR_XYZ] += XYZ_OFFSET;
+	glBufferSubData( GL_ARRAY_BUFFER, g_geom.offset[ATTR_XYZ], numVertexes * sizeof(tess.xyz[0]), ptr );
 	mask |= 1 << ATTR_XYZ;
 
 	// st0
@@ -430,8 +443,8 @@ void vk_bind_lighting( int stage, int bundle )
 		if ( ptr == NULL ) return;
 		ComputeTexCoords( bundle, &tess.xstages[stage]->bundle[bundle] );
 		Com_Memcpy( ptr, tess.svars.texcoordPtr[bundle], st_size );
-		glBufferSubData( GL_ARRAY_BUFFER, ST0_OFFSET + off, st_size, ptr );
-		g_geom.offset[ATTR_ST0] = ST0_OFFSET + off;
+		glBufferSubData( GL_ARRAY_BUFFER, off, st_size, ptr );
+		g_geom.offset[ATTR_ST0] = off;
 		mask |= 1 << ATTR_ST0;
 	}
 
@@ -439,8 +452,7 @@ void vk_bind_lighting( int stage, int bundle )
 	ptr = gles3_geometry_buffer_map( &g_geom.offset[ATTR_NORMAL], nnn_size );
 	if ( ptr == NULL ) return;
 	Com_Memcpy( ptr, tess.normal, nnn_size );
-	glBufferSubData( GL_ARRAY_BUFFER, NNN_OFFSET + g_geom.offset[ATTR_NORMAL], nnn_size, ptr );
-	g_geom.offset[ATTR_NORMAL] += NNN_OFFSET;
+	glBufferSubData( GL_ARRAY_BUFFER, g_geom.offset[ATTR_NORMAL], nnn_size, ptr );
 	mask |= 1 << ATTR_NORMAL;
 
 	g_geom.enabled = mask;
@@ -454,6 +466,7 @@ void vk_bind_pipeline( uint32_t pipeline )
 {
 	const Vk_Pipeline_Def *def;
 	GLuint program;
+	cullType_t cull;
 	static qboolean s_colormask_off = qfalse;
 
 	if ( pipeline >= vk.pipelines_count ) {
@@ -467,10 +480,28 @@ void vk_bind_pipeline( uint32_t pipeline )
 		vk.pipelines[pipeline].program = gles3_get_program( def );
 	}
 
+	// primitive mode for vk_draw_geometry (ES3 has no glPolygonMode; the
+	// wireframe debug pipelines use LINE_LIST like quake3e renderergles3)
+	switch ( def->primitives ) {
+		default:
+		case TRIANGLE_LIST:	g_prim_mode = GL_TRIANGLES; break;
+		case TRIANGLE_STRIP:	g_prim_mode = GL_TRIANGLE_STRIP; break;
+		case LINE_LIST:		g_prim_mode = GL_LINES; break;
+		case POINT_LIST:		g_prim_mode = GL_POINTS; break;
+	}
+
 	program = vk.pipelines[pipeline].program;
 	glUseProgram( program );
 
-	gles3_set_state( def->state_bits, def->face_culling, def->polygon_offset );
+	// rd-vulkan swaps the cull side for mirror pipelines (def->mirror)
+	cull = def->face_culling;
+	if ( def->mirror ) {
+		if ( cull == CT_FRONT_SIDED )
+			cull = CT_BACK_SIDED;
+		else if ( cull == CT_BACK_SIDED )
+			cull = CT_FRONT_SIDED;
+	}
+	gles3_set_state( def->state_bits, cull, def->polygon_offset );
 
 	// Folded-in stage fog samples the fog texture on unit 3 (the frontend
 	// binds per-bundle textures to units 0..2 only).
@@ -531,7 +562,118 @@ static void gles3_commit_attribs( void )
 
 void vk_draw_geometry( Vk_Depth_Range depth_range, qboolean indexed )
 {
+	static int s_dbg;
+	static qboolean s_done;
+	s_dbg++;
+	if ( !s_done && !backEnd.projection2D && backEnd.viewParms.fovY > 0.0f && vk.cmd->num_indexes > 0
+		&& !(backEnd.refdef.rdflags & RDF_NOWORLDMODEL) ) {
+		s_done = qtrue;
+		ri.Printf( PRINT_ALL, "G3DBG draw#%d 2d=%d fovY=%.1f nidx=%u mode=%d\n", s_dbg, backEnd.projection2D, backEnd.viewParms.fovY, vk.cmd->num_indexes, (int)g_prim_mode );
+		ri.Printf( PRINT_ALL, "G3DBG mvp %.4f %.4f %.4f %.4f | %.4f %.4f %.4f %.4f | %.4f %.4f %.4f %.4f | %.4f %.4f %.4f %.4f\n",
+			g_mvp[0],g_mvp[1],g_mvp[2],g_mvp[3],g_mvp[4],g_mvp[5],g_mvp[6],g_mvp[7],
+			g_mvp[8],g_mvp[9],g_mvp[10],g_mvp[11],g_mvp[12],g_mvp[13],g_mvp[14],g_mvp[15] );
+		ri.Printf( PRINT_ALL, "G3DBG mv %.4f %.4f %.4f %.4f | %.4f %.4f %.4f %.4f | %.4f %.4f %.4f %.4f | %.4f %.4f %.4f %.4f\n",
+			vk_world.modelview_transform[0],vk_world.modelview_transform[1],vk_world.modelview_transform[2],vk_world.modelview_transform[3],
+			vk_world.modelview_transform[4],vk_world.modelview_transform[5],vk_world.modelview_transform[6],vk_world.modelview_transform[7],
+			vk_world.modelview_transform[8],vk_world.modelview_transform[9],vk_world.modelview_transform[10],vk_world.modelview_transform[11],
+			vk_world.modelview_transform[12],vk_world.modelview_transform[13],vk_world.modelview_transform[14],vk_world.modelview_transform[15] );
+		ri.Printf( PRINT_ALL, "G3DBG proj %.4f %.4f %.4f %.4f | %.4f %.4f %.4f %.4f | %.4f %.4f %.4f %.4f | %.4f %.4f %.4f %.4f\n",
+			backEnd.viewParms.projectionMatrix[0],backEnd.viewParms.projectionMatrix[1],backEnd.viewParms.projectionMatrix[2],backEnd.viewParms.projectionMatrix[3],
+			backEnd.viewParms.projectionMatrix[4],backEnd.viewParms.projectionMatrix[5],backEnd.viewParms.projectionMatrix[6],backEnd.viewParms.projectionMatrix[7],
+			backEnd.viewParms.projectionMatrix[8],backEnd.viewParms.projectionMatrix[9],backEnd.viewParms.projectionMatrix[10],backEnd.viewParms.projectionMatrix[11],
+			backEnd.viewParms.projectionMatrix[12],backEnd.viewParms.projectionMatrix[13],backEnd.viewParms.projectionMatrix[14],backEnd.viewParms.projectionMatrix[15] );
+		{
+			GLint dt = 0, df = 0, dw = 0, st = 0, vp[4] = {0};
+			GLfloat dc = -1.0f;
+#ifndef GL_DEPTH_FUNC
+#define GL_DEPTH_FUNC 0x2003
+#define GL_DEPTH_WRITEMASK 0x0B72
+#define GL_DEPTH_CLEAR_VALUE 0x0B73
+#define GL_VIEWPORT 0x0BA2
+#endif
+			glGetIntegerv( GL_DEPTH_TEST, &dt );
+			glGetIntegerv( GL_DEPTH_FUNC, &df );
+			{ unsigned char dwb[4] = {0,0,0,0}; glGetBooleanv( GL_DEPTH_WRITEMASK, dwb ); dw = dwb[0]; }
+			glGetFloatv( GL_DEPTH_CLEAR_VALUE, &dc );
+			glGetIntegerv( GL_SCISSOR_TEST, &st );
+			glGetIntegerv( GL_VIEWPORT, vp );
+			ri.Printf( PRINT_ALL, "G3DBG state depthtest=%d depthfunc=0x%x depthmask=%d clearval=%.4f scissor=%d viewport=%d,%d %dx%d glerr=0x%x\n",
+				dt, df, dw, dc, st, vp[0], vp[1], vp[2], vp[3], glGetError() );
+		}
+		{
+			// one-time depth readback: blit default-FB depth into a depth
+			// texture, render it to color, read pixels (GL_DEPTH_COMPONENT
+			// readback is unavailable on this GLES3 stack)
+			static const char *vsrc =
+				"#version 300 es\nin vec2 p;out vec2 uv;void main(){uv=p*0.5+0.5;gl_Position=vec4(p,0.,1.);}\n";
+			static const char *fsrc =
+				"#version 300 es\nprecision mediump float;uniform sampler2D t;in vec2 uv;out vec4 c;void main(){c=vec4(texture(t,uv).rrr,1.);}\n";
+			GLuint dtex, ctex, fbo1, prog2 = 0, vso, fso;
+			GLint l2;
+			const GLushort quad[12] = { 0x8000,0x8000, 0x8000,0x8000, 0x8000,0x8000, 0x8000,0x8000, 0x8000,0x8000, 0x8000,0x8000 };
+			GLfloat px[16*4];
+			int xi, yi;
+			(void)quad;
+			glGenTextures( 1, &dtex );
+			glBindTexture( GL_TEXTURE_2D, dtex );
+#ifndef GL_DEPTH_COMPONENT
+#define GL_DEPTH_COMPONENT 0x1902
+#endif
+			glTexImage2D( GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT16, glConfig.vidWidth, glConfig.vidHeight, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT, NULL );
+			glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
+			glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
+			glGenFramebuffers( 1, &fbo1 );
+			glBindFramebuffer( GL_DRAW_FRAMEBUFFER, fbo1 );
+			glFramebufferTexture2D( GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, dtex, 0 );
+			glBindFramebuffer( GL_READ_FRAMEBUFFER, 0 );
+			glBlitFramebuffer( 0, 0, glConfig.vidWidth, glConfig.vidHeight, 0, 0, glConfig.vidWidth, glConfig.vidHeight, GL_DEPTH_BUFFER_BIT, GL_NEAREST );
+			glBindFramebuffer( GL_DRAW_FRAMEBUFFER, 0 );
+			vso = glCreateShader( GL_VERTEX_SHADER );
+			glShaderSource( vso, 1, &vsrc, NULL );
+			glCompileShader( vso );
+			fso = glCreateShader( GL_FRAGMENT_SHADER );
+			glShaderSource( fso, 1, &fsrc, NULL );
+			glCompileShader( fso );
+			prog2 = glCreateProgram();
+			glAttachShader( prog2, vso );
+			glAttachShader( prog2, fso );
+			glLinkProgram( prog2 );
+			glUseProgram( prog2 );
+			glDisable( GL_DEPTH_TEST );
+			l2 = glGetUniformLocation( prog2, "t" );
+			glUniform1i( l2, 0 );
+			glActiveTexture( GL_TEXTURE0 );
+			glBindTexture( GL_TEXTURE_2D, dtex );
+			{
+				static const GLfloat v[12] = { -1,-1, 1,-1, -1,1, 1,-1, 1,1, -1,1 };
+				glEnableVertexAttribArray( 0 );
+				glVertexAttribPointer( 0, 2, GL_FLOAT, GL_FALSE, 0, v );
+				glDrawArrays( GL_TRIANGLES, 0, 6 );
+				glDisableVertexAttribArray( 0 );
+			}
+			glReadPixels( 0, 0, 4, 4, GL_RGBA, GL_UNSIGNED_BYTE, px );
+			for ( yi = 0; yi < 4; yi++ ) {
+				ri.Printf( PRINT_ALL, "G3DBG depth row%d: %.3f %.3f %.3f %.3f\n", yi,
+					px[(yi*4+0)*4]/255.0f, px[(yi*4+1)*4]/255.0f, px[(yi*4+2)*4]/255.0f, px[(yi*4+3)*4]/255.0f );
+			}
+			glUseProgram( 0 );
+			glDeleteProgram( prog2 );
+			glDeleteShader( vso );
+			glDeleteShader( fso );
+			glDeleteFramebuffers( 1, &fbo1 );
+			glDeleteTextures( 1, &dtex );
+			glEnable( GL_DEPTH_TEST );
+			gles3_state_cache_invalidate();
+		}
+	}
+
 	if ( gles3_geometry_buffer_overflow() )
+		return;
+
+	// transient degenerate projection on the first frame (fovY == 0 ->
+	// inf/NaN MVP); the etalons rely on NaN clips being discarded, we skip
+	// the draw outright
+	if ( !backEnd.projection2D && !( backEnd.viewParms.fovY > 0.0f ) )
 		return;
 
 	gles3_commit_attribs();
@@ -539,10 +681,33 @@ void vk_draw_geometry( Vk_Depth_Range depth_range, qboolean indexed )
 	gles3_apply_uniforms();
 
 	if ( indexed && vk.cmd->num_indexes > 0 ) {
-		glDrawElements( GL_TRIANGLES, vk.cmd->num_indexes, GL_UNSIGNED_INT, BUFFER_OFFSET( 0 ) );
+		glDrawElements( g_prim_mode, vk.cmd->num_indexes, GL_UNSIGNED_INT, BUFFER_OFFSET( vk.cmd->index_offset ) );
 	} else {
-		glDrawArrays( GL_TRIANGLES, 0, tess.numVertexes );
+		glDrawArrays( g_prim_mode, 0, tess.numVertexes );
 	}
+#if 1 //G3DBG_DRAWERR
+	if ( s_dbg < 40 ) {
+		GLenum e = glGetError();
+		if ( e != GL_NO_ERROR )
+			ri.Printf( PRINT_ALL, "G3DBG drawerr#%d glerr=0x%x nidx=%u mode=%d prim2d=%d\n", s_dbg, e, vk.cmd->num_indexes, (int)g_prim_mode, (int)backEnd.projection2D );
+	}
+#endif
+#if 1 //G3DBG_DRAWS
+	if ( !backEnd.projection2D && backEnd.viewParms.fovY > 0.0f && vk.cmd->num_indexes > 0 ) {
+		static int s_wdbg;
+		const float *v = (const float*)(tess.xyz[0]);
+		float clip[4];
+		int ci, qi;
+		s_wdbg++;
+		for ( ci = 0; ci < 4; ci++ )
+			clip[ci] = g_mvp[ci]*v[0] + g_mvp[4+ci]*v[1] + g_mvp[8+ci]*v[2] + g_mvp[12+ci];
+		qi = 0; (void)qi;
+		if ( s_wdbg <= 30 )
+		ri.Printf( PRINT_ALL, "G3DBG wdraw#%d nidx=%u mode=%d dr=%d v0=(%.1f %.1f %.1f) z_ndc=%.4f w=%.1f\n",
+			s_wdbg, vk.cmd->num_indexes, (int)g_prim_mode, (int)depth_range,
+			v[0], v[1], v[2], (clip[3] != 0.0f ? clip[2]/clip[3] : 0.0f), clip[3] );
+	}
+#endif
 }
 
 void vk_draw_dot( uint32_t storage_offset )

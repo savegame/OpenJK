@@ -78,7 +78,7 @@ void vk_get_pipeline_def( uint32_t pipeline, Vk_Pipeline_Def *def )
 	*def = vk.pipelines[pipeline].def;
 }
 
-static uint32_t gles3_create_std_pipeline( Vk_Shader_Type type, uint32_t state_bits, cullType_t cull, qboolean poly_offset )
+static uint32_t gles3_create_std_pipeline( Vk_Shader_Type type, uint32_t state_bits, cullType_t cull, qboolean poly_offset, Vk_Primitive_Topology primitives )
 {
 	Vk_Pipeline_Def def;
 
@@ -86,11 +86,13 @@ static uint32_t gles3_create_std_pipeline( Vk_Shader_Type type, uint32_t state_b
 	def.shader_type = type;
 	def.state_bits = state_bits;
 	def.face_culling = cull;
-	def.primitives = TRIANGLE_LIST;
+	def.primitives = primitives;
 	def.polygon_offset = poly_offset;
 
 	return vk_find_pipeline_ext( 0, &def, qtrue );
 }
+
+#define G3_STD_PIPELINE( type, bits, cull, poff ) gles3_create_std_pipeline( type, bits, cull, poff, TRIANGLE_LIST )
 
 void vk_create_pipelines( void )
 {
@@ -102,19 +104,19 @@ void vk_create_pipelines( void )
 	//
 	// standard pipelines
 	//
-	vk.std_pipeline.skybox_pipeline = gles3_create_std_pipeline( TYPE_COLOR_BLACK, GLS_DEFAULT, CT_FRONT_SIDED, qfalse );
-	vk.std_pipeline.worldeffect_pipeline[0] = gles3_create_std_pipeline( TYPE_SINGLE_TEXTURE, GLS_DEFAULT, CT_FRONT_SIDED, qfalse );
-	vk.std_pipeline.worldeffect_pipeline[1] = gles3_create_std_pipeline( TYPE_SINGLE_TEXTURE, GLS_DEFAULT, CT_TWO_SIDED, qfalse );
+	vk.std_pipeline.skybox_pipeline = G3_STD_PIPELINE( TYPE_COLOR_BLACK, GLS_DEFAULT, CT_FRONT_SIDED, qfalse );
+	vk.std_pipeline.worldeffect_pipeline[0] = G3_STD_PIPELINE( TYPE_SINGLE_TEXTURE, GLS_DEFAULT, CT_FRONT_SIDED, qfalse );
+	vk.std_pipeline.worldeffect_pipeline[1] = G3_STD_PIPELINE( TYPE_SINGLE_TEXTURE, GLS_DEFAULT, CT_TWO_SIDED, qfalse );
 
 	// stencil shadow volumes: src=dst_alpha dst=one_minus_src_alpha style blending
 	for ( i = 0; i < 2; i++ ) {
 		for ( j = 0; j < 2; j++ ) {
-			vk.std_pipeline.shadow_volume_pipelines[i][j] = gles3_create_std_pipeline( TYPE_COLOR_BLACK,
+			vk.std_pipeline.shadow_volume_pipelines[i][j] = G3_STD_PIPELINE( TYPE_COLOR_BLACK,
 				GLS_SRCBLEND_DST_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA | GLS_DEPTHTEST_DISABLE,
 				i == 0 ? CT_FRONT_SIDED : CT_BACK_SIDED, qfalse );
 		}
 	}
-	vk.std_pipeline.shadow_finish_pipeline = gles3_create_std_pipeline( TYPE_COLOR_BLACK,
+	vk.std_pipeline.shadow_finish_pipeline = G3_STD_PIPELINE( TYPE_COLOR_BLACK,
 		GLS_SRCBLEND_ONE_MINUS_SRC_ALPHA | GLS_DSTBLEND_SRC_ALPHA | GLS_DEPTHTEST_DISABLE, CT_TWO_SIDED, qfalse );
 
 	// fog pipelines: fogPass(3) x cull(3... stored as 2 + polygonOffset) x offset(2) x fogStage(2)
@@ -122,7 +124,7 @@ void vk_create_pipelines( void )
 		for ( j = 0; j < 2; j++ ) {
 			for ( k = 0; k < 3; k++ ) {
 				for ( l = 0; l < 2; l++ ) {
-					vk.std_pipeline.fog_pipelines[i][j][k][l] = gles3_create_std_pipeline( TYPE_FOG_ONLY,
+					vk.std_pipeline.fog_pipelines[i][j][k][l] = G3_STD_PIPELINE( TYPE_FOG_ONLY,
 						GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA | GLS_DEPTHTEST_DISABLE,
 						(cullType_t)j, l ? qtrue : qfalse );
 				}
@@ -135,10 +137,10 @@ void vk_create_pipelines( void )
 		for ( j = 0; j < 2; j++ ) {
 			for ( k = 0; k < 2; k++ ) {
 				for ( l = 0; l < 2; l++ ) {
-					vk.std_pipeline.dlight_pipelines_x[i][j][k][l] = gles3_create_std_pipeline( TYPE_SINGLE_TEXTURE_LIGHTING,
+					vk.std_pipeline.dlight_pipelines_x[i][j][k][l] = G3_STD_PIPELINE( TYPE_SINGLE_TEXTURE_LIGHTING,
 						GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_DEPTHMASK_TRUE,
 						(cullType_t)i, j ? qtrue : qfalse );
-					vk.std_pipeline.dlight1_pipelines_x[i][j][k][l] = gles3_create_std_pipeline( TYPE_SINGLE_TEXTURE_LIGHTING_LINEAR,
+					vk.std_pipeline.dlight1_pipelines_x[i][j][k][l] = G3_STD_PIPELINE( TYPE_SINGLE_TEXTURE_LIGHTING_LINEAR,
 						GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_DEPTHMASK_TRUE,
 						(cullType_t)i, j ? qtrue : qfalse );
 				}
@@ -147,20 +149,23 @@ void vk_create_pipelines( void )
 	}
 #endif
 
-	// debug visualization
-	vk.std_pipeline.tris_debug_pipeline = gles3_create_std_pipeline( TYPE_COLOR_GREEN, GLS_POLYMODE_LINE | GLS_DEPTHTEST_DISABLE, CT_TWO_SIDED, qfalse );
+	// debug visualization (LINE_LIST stands in for Vulkan's polygonMode LINE,
+	// which ES3 does not have; see quake3e renderergles3 gles3_apply_pipeline_state)
+	vk.std_pipeline.tris_debug_pipeline = gles3_create_std_pipeline( TYPE_COLOR_GREEN, GLS_POLYMODE_LINE | GLS_DEPTHTEST_DISABLE, CT_TWO_SIDED, qfalse, LINE_LIST );
 	vk.std_pipeline.tris_mirror_debug_pipeline = vk.std_pipeline.tris_debug_pipeline;
 	vk.std_pipeline.tris_debug_green_pipeline = vk.std_pipeline.tris_debug_pipeline;
 	vk.std_pipeline.tris_mirror_debug_green_pipeline = vk.std_pipeline.tris_debug_pipeline;
-	vk.std_pipeline.tris_debug_red_pipeline = gles3_create_std_pipeline( TYPE_COLOR_RED, GLS_POLYMODE_LINE | GLS_DEPTHTEST_DISABLE, CT_TWO_SIDED, qfalse );
+	vk.std_pipeline.tris_debug_red_pipeline = gles3_create_std_pipeline( TYPE_COLOR_RED, GLS_POLYMODE_LINE | GLS_DEPTHTEST_DISABLE, CT_TWO_SIDED, qfalse, LINE_LIST );
 	vk.std_pipeline.tris_mirror_debug_red_pipeline = vk.std_pipeline.tris_debug_red_pipeline;
 
 	vk.std_pipeline.normals_debug_pipeline = vk.std_pipeline.tris_debug_pipeline;
-	vk.std_pipeline.surface_debug_pipeline_solid = gles3_create_std_pipeline( TYPE_COLOR_WHITE, GLS_DEPTHTEST_DISABLE, CT_TWO_SIDED, qfalse );
-	vk.std_pipeline.surface_debug_pipeline_outline = gles3_create_std_pipeline( TYPE_COLOR_BLACK, GLS_POLYMODE_LINE | GLS_DEPTHTEST_DISABLE, CT_TWO_SIDED, qfalse );
-	vk.std_pipeline.images_debug_pipeline = gles3_create_std_pipeline( TYPE_SINGLE_TEXTURE, GLS_DEPTHTEST_DISABLE, CT_TWO_SIDED, qfalse );
+	vk.std_pipeline.surface_debug_pipeline_solid = G3_STD_PIPELINE( TYPE_COLOR_WHITE, GLS_DEPTHTEST_DISABLE, CT_TWO_SIDED, qfalse );
+	vk.std_pipeline.surface_debug_pipeline_outline = gles3_create_std_pipeline( TYPE_COLOR_BLACK, GLS_POLYMODE_LINE | GLS_DEPTHTEST_DISABLE, CT_TWO_SIDED, qfalse, LINE_LIST );
+	vk.std_pipeline.images_debug_pipeline = gles3_create_std_pipeline( TYPE_SINGLE_TEXTURE,
+		GLS_DEPTHTEST_DISABLE | GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA, CT_TWO_SIDED, qfalse, TRIANGLE_STRIP );
 
-	vk.std_pipeline.surface_beam_pipeline = gles3_create_std_pipeline( TYPE_SINGLE_TEXTURE, GLS_DEFAULT, CT_TWO_SIDED, qfalse );
-	vk.std_pipeline.surface_axis_pipeline = gles3_create_std_pipeline( TYPE_SINGLE_TEXTURE, GLS_DEFAULT, CT_TWO_SIDED, qfalse );
-	vk.std_pipeline.dot_pipeline = gles3_create_std_pipeline( TYPE_DOT, GLS_DEFAULT, CT_TWO_SIDED, qfalse );
+	vk.std_pipeline.surface_beam_pipeline = gles3_create_std_pipeline( TYPE_SINGLE_TEXTURE,
+		GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE, CT_FRONT_SIDED, qfalse, TRIANGLE_STRIP );
+	vk.std_pipeline.surface_axis_pipeline = gles3_create_std_pipeline( TYPE_SINGLE_TEXTURE, GLS_DEFAULT, CT_TWO_SIDED, qfalse, LINE_LIST );
+	vk.std_pipeline.dot_pipeline = G3_STD_PIPELINE( TYPE_DOT, GLS_DEFAULT, CT_TWO_SIDED, qfalse );
 }

@@ -229,11 +229,12 @@ void vk_initialize( void )
 	glDisable( GL_POLYGON_OFFSET_FILL );
 	glDisable( GL_STENCIL_TEST );
 	glDepthMask( GL_TRUE );
-	glDepthFunc( GL_LESS );
+	glDepthFunc( GL_LEQUAL );
 	glFrontFace( GL_CCW );
 	glViewport( 0, 0, glConfig.vidWidth, glConfig.vidHeight );
 	glScissor( 0, 0, glConfig.vidWidth, glConfig.vidHeight );
 	glClearColor( 0.0f, 0.0f, 0.0f, 1.0f );
+	glClearDepthf( 1.0f );
 
 	vk.active = qtrue;
 

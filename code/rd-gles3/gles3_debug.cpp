@@ -45,7 +45,25 @@ Draws triangle outlines for debugging r_showtris
 */
 void DrawTris( const shaderCommands_t *pInput )
 {
-	(void)pInput;
+	uint32_t pipeline;
+
+	if ( tess.numIndexes == 0 )
+		return;
+
+	if ( r_fastsky->integer && pInput->shader->isSky )
+		return;
+
+#ifdef USE_PMLIGHT
+	if ( tess.dlightPass )
+		pipeline = backEnd.viewParms.portalView == PV_MIRROR ? vk.std_pipeline.tris_mirror_debug_red_pipeline : vk.std_pipeline.tris_debug_red_pipeline;
+	else
+#endif
+		pipeline = ( backEnd.viewParms.portalView == PV_MIRROR ) ? vk.std_pipeline.tris_mirror_debug_pipeline : vk.std_pipeline.tris_debug_pipeline;
+
+	// geometry and indexes are still bound from the stage iterator; the
+	// tris pipeline draws the index stream as GL_LINES (LINE_LIST def)
+	vk_bind_pipeline( pipeline );
+	vk_draw_geometry( DEPTH_RANGE_ZERO, qtrue );
 }
 
 /*

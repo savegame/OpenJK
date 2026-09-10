@@ -442,6 +442,7 @@ typedef struct vk_tess_s {
 	Vk_Depth_Range		depth_range;
 
 	uint32_t			num_indexes; // value from most recent vk_bind_index() call
+	uint32_t			index_offset; // device offset from the same call
 
 	uint32_t			camera_ubo_offset;
 	uint32_t			entity_ubo_offset[REFENTITYNUM_WORLD + 1];

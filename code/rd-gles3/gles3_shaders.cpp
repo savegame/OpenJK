@@ -354,6 +354,7 @@ static const char *const FS_GEN =
 	"uniform float u_AlphaTest;\n"
 	"#endif\n"
 	"void main() {\n"
+	"out_color = texture(u_Texture0, v_tc0); return;\n" // G3DBG-FS
 	"#ifdef USE_FIXED_COLOR\n"
 	"	vec4 color0 = texture(u_Texture0, v_tc0) * u_FixedColor;\n"
 	"#elif defined(USE_CLX_IDENT)\n"

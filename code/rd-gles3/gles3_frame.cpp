@@ -84,6 +84,11 @@ void gles3_update_depth_range( Vk_Depth_Range depth_range )
 
 	gles3_get_viewport_rect( &x, &y, &w, &h );
 	glViewport( x, y, w, h );
+	// rd-vulkan binds scissor == viewport on every draw (mirror/portal
+	// sub-views restrict rendering to the portal surface's screen rect);
+	// without this the portal scene would overwrite the whole framebuffer
+	glScissor( x, y, w, h );
+	glEnable( GL_SCISSOR_TEST );
 	glDepthRangef( depth_min, depth_max );
 }
 
@@ -129,8 +134,11 @@ void gles3_set_state( uint32_t state_bits, cullType_t face_culling, qboolean pol
 			glEnable( GL_DEPTH_TEST );
 	}
 
+	// rd-vulkan (USE_REVERSED_DEPTH off) uses VK_COMPARE_OP_LESS_OR_EQUAL
+	// with depth clear 1.0; the MVP z-remap in get_mvp_transform maps the
+	// projection back to that same [0(near)..1(far)] window-depth convention.
 	if ( diff & GLS_DEPTHFUNC_EQUAL )
-		glDepthFunc( (state_bits & GLS_DEPTHFUNC_EQUAL) ? GL_EQUAL : GL_LESS );
+		glDepthFunc( (state_bits & GLS_DEPTHFUNC_EQUAL) ? GL_EQUAL : GL_LEQUAL );
 
 	if ( diff & GLS_DEPTHMASK_TRUE )
 		glDepthMask( (state_bits & GLS_DEPTHMASK_TRUE) ? GL_TRUE : GL_FALSE );
@@ -174,7 +182,10 @@ void gles3_set_state( uint32_t state_bits, cullType_t face_culling, qboolean pol
 
 	glStateCache.state_bits = state_bits;
 
-	// face culling
+	// face culling. Q3 vertex order is clockwise in NDC for the Y-flipped
+	// (proj[5] negated) vk-style projection, matching rd-vulkan's
+	// VK_FRONT_FACE_CLOCKWISE; the mirror flag swaps the cull side exactly
+	// like rd-vulkan's rasterizer does for def->mirror.
 	if ( !glStateCache.valid || glStateCache.face_culling != face_culling ) {
 		switch ( face_culling ) {
 			case CT_FRONT_SIDED:
@@ -292,6 +303,9 @@ void vk_begin_frame( void )
 	gles3_uniform_reset();
 	gles3_state_cache_invalidate();
 
+	vk.cmd->num_indexes = 0;
+	vk.cmd->index_offset = 0;
+
 	glBindBuffer( GL_ARRAY_BUFFER, vk.vertex_buffer );
 	glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, vk.index_buffer );
 
@@ -351,12 +365,29 @@ void vk_clear_color_attachments( const vec4_t color )
 	glEnable( GL_SCISSOR_TEST );
 	glClearColor( color[0], color[1], color[2], color[3] );
 	glClear( GL_COLOR_BUFFER_BIT );
-	glDisable( GL_SCISSOR_TEST );
+	// keep scissor enabled; draws re-set scissor == viewport per view
 }
 
 void vk_clear_depthstencil_attachments( qboolean clear_stencil )
 {
 	GLbitfield mask = GL_DEPTH_BUFFER_BIT;
+	int x, y, w, h;
+
+	// glClear(GL_DEPTH_BUFFER_BIT) is a no-op while depth writes are masked
+	// (the 2D/HUD stage of the previous frame leaves glDepthMask(GL_FALSE)).
+	glDepthMask( GL_TRUE );
+
+	// Like rd-vulkan's scissor-bounded vkCmdClearAttachments: a portal /
+	// mirror sub-view clears depth only within its scissor rect, the main
+	// view's depth outside the portal region must survive. glClear respects
+	// the scissor test, so set it to the current view rect explicitly.
+	gles3_get_scissor_rect( &x, &y, &w, &h );
+	glScissor( x, y, w, h );
+	glEnable( GL_SCISSOR_TEST );
+	gles3_state_cache_invalidate();
+
+	// rd-vulkan (non-reversed) clears depth to 1.0 = farthest
+	glClearDepthf( 1.0f );
 
 	if ( clear_stencil )
 		mask |= GL_STENCIL_BUFFER_BIT;
@@ -408,11 +439,12 @@ void vk_read_pixels( byte *buffer, uint32_t width, uint32_t height )
 	if ( tmp == NULL )
 		return;
 
-	// GL returns rows bottom-to-top; flip to top-to-bottom. Output format is
-	// tightly packed RGB (3 bytes/px) as expected by RB_ReadPixels callers.
+	// Output contract matches rd-vulkan vk_read_pixels: tightly packed RGB,
+	// rows bottom-up (glReadPixels order) - the frontend flips when encoding
+	// the screenshot, so no row flip belongs here.
 	for ( y = 0; y < height; y++ ) {
-		byte *dst = buffer + y * width * 3;
-		glReadPixels( 0, height - 1 - y, width, 1, GL_RGBA, GL_UNSIGNED_BYTE, tmp );
+		byte *dst = buffer + ( height - 1 - y ) * width * 3;
+		glReadPixels( 0, y, width, 1, GL_RGBA, GL_UNSIGNED_BYTE, tmp );
 		for ( x = 0; x < width; x++ ) {
 			dst[x * 3 + 0] = tmp[x * 4 + 0];
 			dst[x * 3 + 1] = tmp[x * 4 + 1];
