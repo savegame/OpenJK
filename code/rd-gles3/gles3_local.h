@@ -40,6 +40,13 @@ void	gles3_get_scissor_rect( int *x, int *y, int *w, int *h );
 void	gles3_set_state( uint32_t state_bits, cullType_t face_culling, qboolean polygon_offset );
 void	gles3_state_cache_invalidate( void );
 
+// pipeline state that Vulkan bakes into the pipeline object but GL keeps as
+// sticky global state - replayed by vk_bind_pipeline, dropped by the
+// invalidate above
+void	gles3_set_shadow_phase( Vk_Shadow_Phase phase, cullType_t face_culling );
+void	gles3_set_colormask( qboolean write_color );
+void	gles3_attribs_invalidate( void );
+
 // depth range -> viewport/depth range update (cached per command buffer)
 void	gles3_update_depth_range( Vk_Depth_Range depth_range );
 

@@ -44,8 +44,12 @@ void gles3_get_viewport_rect( int *x, int *y, int *w, int *h )
 	}
 	else
 	{
+		// viewParms.viewportX/Y are already in GL window space (origin at the
+		// bottom-left), which is why rd-vanilla passes them to glViewport
+		// unchanged.  rd-vulkan flips y here only because Vulkan's framebuffer
+		// origin is top-left - in GL that flip has to stay out.
 		*x = backEnd.viewParms.viewportX * vk.renderScaleX;
-		*y = vk.renderHeight - (backEnd.viewParms.viewportY + backEnd.viewParms.viewportHeight) * vk.renderScaleY;
+		*y = backEnd.viewParms.viewportY * vk.renderScaleY;
 		*w = (float)backEnd.viewParms.viewportWidth * vk.renderScaleX;
 		*h = (float)backEnd.viewParms.viewportHeight * vk.renderScaleY;
 	}
@@ -53,7 +57,25 @@ void gles3_get_viewport_rect( int *x, int *y, int *w, int *h )
 
 void gles3_get_scissor_rect( int *x, int *y, int *w, int *h )
 {
+	// port of rd-vulkan get_scissor_rect (vk_init.cpp:143), GL y convention
+	if ( backEnd.viewParms.portalView != PV_NONE )
+	{
+		*x = backEnd.viewParms.scissorX;
+		*y = backEnd.viewParms.scissorY;
+		*w = backEnd.viewParms.scissorWidth;
+		*h = backEnd.viewParms.scissorHeight;
+		return;
+	}
+
 	gles3_get_viewport_rect( x, y, w, h );
+
+	if ( *x < 0 ) *x = 0;
+	if ( *y < 0 ) *y = 0;
+
+	if ( *x + *w > glConfig.vidWidth )
+		*w = glConfig.vidWidth - *x;
+	if ( *y + *h > glConfig.vidHeight )
+		*h = glConfig.vidHeight - *y;
 }
 
 void gles3_update_depth_range( Vk_Depth_Range depth_range )
@@ -84,9 +106,11 @@ void gles3_update_depth_range( Vk_Depth_Range depth_range )
 
 	gles3_get_viewport_rect( &x, &y, &w, &h );
 	glViewport( x, y, w, h );
-	// rd-vulkan binds scissor == viewport on every draw (mirror/portal
-	// sub-views restrict rendering to the portal surface's screen rect);
-	// without this the portal scene would overwrite the whole framebuffer
+
+	// rd-vulkan re-binds the scissor together with the viewport; mirror and
+	// portal sub-views restrict rendering to the portal surface's screen
+	// rect, without which the portal scene overwrites the whole framebuffer
+	gles3_get_scissor_rect( &x, &y, &w, &h );
 	glScissor( x, y, w, h );
 	glEnable( GL_SCISSOR_TEST );
 	glDepthRangef( depth_min, depth_max );
@@ -101,6 +125,17 @@ typedef struct gles3_state_s {
 	cullType_t		face_culling;
 	qboolean		polygon_offset;
 	qboolean		valid;
+
+	// Stencil test and color write mask are part of the pipeline object in
+	// Vulkan, so every vkCmdBindPipeline re-establishes them.  In GL they are
+	// sticky global state: vk_bind_pipeline has to replay them, and the cache
+	// must be dropped whenever the state may have changed behind our back
+	// (frame start, render-pass switch, clears).
+	Vk_Shadow_Phase	shadow_phase;
+	cullType_t		shadow_cull;
+	qboolean		shadow_valid;
+	qboolean		colormask_off;
+	qboolean		colormask_valid;
 } gles3_state_t;
 
 static gles3_state_t glStateCache;
@@ -110,6 +145,68 @@ static byte *s_index_stage; // host shadow for the streaming index buffer
 void gles3_state_cache_invalidate( void )
 {
 	glStateCache.valid = qfalse;
+	glStateCache.shadow_valid = qfalse;
+	glStateCache.colormask_valid = qfalse;
+	gles3_attribs_invalidate();
+}
+
+// Stencil state of the Q3 shadow-volume pipelines, mirrored from
+// vk_pipelines.cpp:1268-1302.  SHADOW_EDGES counts front/back faces of the
+// volume into the stencil buffer, SHADOW_FS_QUAD darkens only the pixels the
+// count marked.  Note the increment/decrement side follows def->face_culling,
+// i.e. the *unmirrored* cull mode, exactly like the Vulkan pipeline does.
+void gles3_set_shadow_phase( Vk_Shadow_Phase phase, cullType_t face_culling )
+{
+	if ( glStateCache.shadow_valid && glStateCache.shadow_phase == phase &&
+		( phase != SHADOW_EDGES || glStateCache.shadow_cull == face_culling ) )
+	{
+		return;
+	}
+
+	switch ( phase ) {
+		case SHADOW_EDGES:
+			glEnable( GL_STENCIL_TEST );
+			glStencilMask( 255 );
+			glStencilFunc( GL_ALWAYS, 0, 255 );
+			glStencilOp( GL_KEEP, GL_KEEP,
+				( face_culling == CT_FRONT_SIDED ) ? GL_INCR : GL_DECR );
+			break;
+
+		case SHADOW_FS_QUAD:
+			glEnable( GL_STENCIL_TEST );
+			glStencilMask( 255 );
+			glStencilFunc( GL_NOTEQUAL, 0, 255 );
+			glStencilOp( GL_KEEP, GL_KEEP, GL_KEEP );
+			break;
+
+		default:
+		case SHADOW_DISABLED:
+			glDisable( GL_STENCIL_TEST );
+			// leave the write mask open so glClear(GL_STENCIL_BUFFER_BIT) works
+			glStencilMask( 255 );
+			break;
+	}
+
+	glStateCache.shadow_phase = phase;
+	glStateCache.shadow_cull = face_culling;
+	glStateCache.shadow_valid = qtrue;
+}
+
+// Vulkan counterpart: attachment_blend_state.colorWriteMask
+// (vk_pipelines.cpp:1306) - shadow volumes and the TYPE_DOT occlusion probe
+// write depth/stencil only.
+void gles3_set_colormask( qboolean write_color )
+{
+	if ( glStateCache.colormask_valid && glStateCache.colormask_off == (qboolean)!write_color )
+		return;
+
+	if ( write_color )
+		glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
+	else
+		glColorMask( GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE );
+
+	glStateCache.colormask_off = (qboolean)!write_color;
+	glStateCache.colormask_valid = qtrue;
 }
 
 void gles3_set_state( uint32_t state_bits, cullType_t face_culling, qboolean polygon_offset )
@@ -182,20 +279,22 @@ void gles3_set_state( uint32_t state_bits, cullType_t face_culling, qboolean pol
 
 	glStateCache.state_bits = state_bits;
 
-	// face culling. Q3 vertex order is clockwise in NDC for the Y-flipped
-	// (proj[5] negated) vk-style projection, matching rd-vulkan's
-	// VK_FRONT_FACE_CLOCKWISE; the mirror flag swaps the cull side exactly
-	// like rd-vulkan's rasterizer does for def->mirror.
+	// Face culling.  rd-vulkan declares VK_FRONT_FACE_CLOCKWISE ("Q3 defaults
+	// to clockwise vertex order", vk_pipelines.cpp:1218) and culls BACK for
+	// CT_FRONT_SIDED; with the unflipped GL projection that is literally
+	// glFrontFace(GL_CW) + glCullFace(GL_BACK), and equals rd-vanilla's
+	// CCW + cull FRONT.  The mirror flag swaps the cull side upstream in
+	// vk_bind_pipeline, exactly like rd-vulkan's rasterizer does.
 	if ( !glStateCache.valid || glStateCache.face_culling != face_culling ) {
 		switch ( face_culling ) {
 			case CT_FRONT_SIDED:
 				glCullFace( GL_BACK );
-				glFrontFace( GL_CCW );
+				glFrontFace( GL_CW );
 				glEnable( GL_CULL_FACE );
 				break;
 			case CT_BACK_SIDED:
 				glCullFace( GL_FRONT );
-				glFrontFace( GL_CCW );
+				glFrontFace( GL_CW );
 				glEnable( GL_CULL_FACE );
 				break;
 			case CT_TWO_SIDED:
@@ -305,6 +404,7 @@ void vk_begin_frame( void )
 
 	vk.cmd->num_indexes = 0;
 	vk.cmd->index_offset = 0;
+	vk.cmd->depth_range = DEPTH_RANGE_COUNT;
 
 	glBindBuffer( GL_ARRAY_BUFFER, vk.vertex_buffer );
 	glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, vk.index_buffer );
@@ -344,6 +444,10 @@ void vk_end_render_pass( void )
 void vk_begin_main_render_pass( void )
 {
 	vk.renderPassIndex = RENDER_PASS_MAIN;
+	// vkCmdBeginRenderPass resets the dynamic state in rd-vulkan
+	// (vk_frame.cpp:970); GL keeps it, so force the viewport/scissor/depth
+	// range to be re-issued on the next draw
+	vk.cmd->depth_range = DEPTH_RANGE_COUNT;
 }
 
 void vk_begin_post_refraction_extract_render_pass( void )
@@ -363,6 +467,9 @@ void vk_clear_color_attachments( const vec4_t color )
 	gles3_get_viewport_rect( &x, &y, &w, &h );
 	glScissor( x, y, w, h );
 	glEnable( GL_SCISSOR_TEST );
+	// glClear honours the color write mask, which the shadow-volume and
+	// depth-fragment pipelines leave switched off
+	gles3_set_colormask( qtrue );
 	glClearColor( color[0], color[1], color[2], color[3] );
 	glClear( GL_COLOR_BUFFER_BIT );
 	// keep scissor enabled; draws re-set scissor == viewport per view
@@ -384,7 +491,10 @@ void vk_clear_depthstencil_attachments( qboolean clear_stencil )
 	gles3_get_scissor_rect( &x, &y, &w, &h );
 	glScissor( x, y, w, h );
 	glEnable( GL_SCISSOR_TEST );
+	// glClear honours the stencil write mask too, so make sure the shadow
+	// state is re-applied (and the mask left open) before clearing
 	gles3_state_cache_invalidate();
+	glStencilMask( 255 );
 
 	// rd-vulkan (non-reversed) clears depth to 1.0 = farthest
 	glClearDepthf( 1.0f );
@@ -440,10 +550,11 @@ void vk_read_pixels( byte *buffer, uint32_t width, uint32_t height )
 		return;
 
 	// Output contract matches rd-vulkan vk_read_pixels: tightly packed RGB,
-	// rows bottom-up (glReadPixels order) - the frontend flips when encoding
-	// the screenshot, so no row flip belongs here.
+	// rows bottom-up - which is exactly glReadPixels' own order, so rows are
+	// copied straight through.  (The extra flip that used to live here only
+	// compensated for the upside-down 3D projection.)
 	for ( y = 0; y < height; y++ ) {
-		byte *dst = buffer + ( height - 1 - y ) * width * 3;
+		byte *dst = buffer + y * width * 3;
 		glReadPixels( 0, y, width, 1, GL_RGBA, GL_UNSIGNED_BYTE, tmp );
 		for ( x = 0; x < width; x++ ) {
 			dst[x * 3 + 0] = tmp[x * 4 + 0];

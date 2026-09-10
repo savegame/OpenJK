@@ -88,7 +88,10 @@ static void get_mvp_transform( float *mvp )
 		float proj[16];
 		Com_Memcpy(proj, p, 64);
 
-		proj[5] = -p[5];
+		// rd-vulkan negates proj[5] here because Vulkan NDC y points down.
+		// GL NDC y points up, like the projection R_SetupProjection builds,
+		// so the row is used as-is - negating it renders the scene upside
+		// down relative to the 2D/HUD pass.
 		myGlMultMatrix(vk_world.modelview_transform, proj, mvp);
 
 		// The vk-style projection yields z_ndc in [0(near)..1(far)] for a
@@ -467,7 +470,6 @@ void vk_bind_pipeline( uint32_t pipeline )
 	const Vk_Pipeline_Def *def;
 	GLuint program;
 	cullType_t cull;
-	static qboolean s_colormask_off = qfalse;
 
 	if ( pipeline >= vk.pipelines_count ) {
 		ri.Error( ERR_DROP, "vk_bind_pipeline: invalid pipeline %u", pipeline );
@@ -510,26 +512,45 @@ void vk_bind_pipeline( uint32_t pipeline )
 		glBindTexture( GL_TEXTURE_2D, G3_IMG_H( tr.fogImage->handle ) );
 	}
 
-	// Depth-fragment stages write depth only (ES 3.0 has no gl_FragDepth;
-	// the FS does the alpha cutout and the color mask hides the dummy output).
-	if ( def->shader_type == TYPE_SINGLE_TEXTURE_DF ) {
-		if ( !s_colormask_off ) {
-			glColorMask( GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE );
-			s_colormask_off = qtrue;
-		}
-	} else if ( s_colormask_off ) {
-		glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
-		s_colormask_off = qfalse;
-	}
+	// Stencil test: SHADOW_EDGES/SHADOW_FS_QUAD pipelines carry it in the
+	// Vulkan pipeline object.  The increment side follows the unmirrored
+	// def->face_culling (see vk_pipelines.cpp:1272).
+	gles3_set_shadow_phase( def->shadow_phase, def->face_culling );
+
+	// Color write mask off for the passes that only produce depth/stencil:
+	// shadow volumes and the TYPE_DOT probe (colorWriteMask == 0 in Vulkan),
+	// plus the depth-fragment stages - ES 3.0 has no gl_FragDepth, so the FS
+	// does the alpha cutout and the color mask hides its dummy output.
+	gles3_set_colormask( (qboolean)!(
+		def->shadow_phase == SHADOW_EDGES ||
+		def->shader_type == TYPE_DOT ||
+		def->shader_type == TYPE_SINGLE_TEXTURE_DF ) );
 
 	glActiveTexture( GL_TEXTURE0 + vk.ctmu );
 }
 
+// Enabled-attribute set is sticky GL state like the rest of the cache; a
+// clear/render-pass switch that touches GL behind our back must force the
+// next commit to re-issue every glEnable/DisableVertexAttribArray.
+static uint32_t s_enabled_mask;
+static qboolean s_enabled_valid;
+
+void gles3_attribs_invalidate( void )
+{
+	s_enabled_valid = qfalse;
+}
+
 static void gles3_commit_attribs( void )
 {
-	static uint32_t s_enabled_mask;
 	uint32_t i;
 	uint32_t mask = g_geom.enabled;
+
+	if ( !s_enabled_valid ) {
+		s_enabled_mask = 0;
+		for ( i = 0; i < ATTR_COUNT; i++ )
+			glDisableVertexAttribArray( i );
+		s_enabled_valid = qtrue;
+	}
 
 	for ( i = 0; i < ATTR_COUNT; i++ ) {
 		if ( mask & (1 << i) ) {

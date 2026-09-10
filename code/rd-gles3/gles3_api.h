@@ -165,6 +165,15 @@ typedef unsigned long long GLuint64;
 #define GL_GEQUAL						0x0206
 #define GL_ALWAYS						0x0207
 
+// stencil ops
+#define GL_KEEP							0x1E00
+#define GL_REPLACE						0x1E01
+#define GL_INCR							0x1E02
+#define GL_DECR							0x1E03
+#define GL_INVERT						0x150A
+#define GL_INCR_WRAP					0x8507
+#define GL_DECR_WRAP					0x8508
+
 // blend factors
 #define GL_ZERO							0
 #define GL_ONE							1
