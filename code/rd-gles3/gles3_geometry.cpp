@@ -583,6 +583,14 @@ static void gles3_commit_attribs( void )
 
 void vk_draw_geometry( Vk_Depth_Range depth_range, qboolean indexed )
 {
+	// The streaming buffers overflowed earlier in this frame, so vk_bind_*
+	// bailed out and the attribute offsets still point at the previous
+	// draw's data.  rd-vulkan skips the rest of the frame in exactly the
+	// same situation (vk_shade_geometry.cpp:882); drawing anyway paints
+	// stale geometry and makes the scene flicker.
+	if ( gles3_geometry_buffer_overflow() )
+		return;
+
 	gles3_commit_attribs();
 	gles3_update_depth_range( depth_range );
 	gles3_apply_uniforms();

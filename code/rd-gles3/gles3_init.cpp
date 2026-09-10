@@ -88,11 +88,13 @@ static void gles3_destroy_geometry_buffers( void )
 	vk.geometry_buffer_size = 0;
 }
 
-static void gles3_create_geometry_buffers( void )
+static void gles3_create_geometry_buffers( uint32_t vertex_size, uint32_t index_size )
 {
 	gles3_destroy_geometry_buffers();
 
-	vk.geometry_buffer_size = VERTEX_BUFFER_SIZE;
+	vk.geometry_buffer_size = vertex_size;
+	vk.index_buffer_size = index_size;
+
 	vk.geometry_buffer = (byte*)malloc( vk.geometry_buffer_size );
 	if ( vk.geometry_buffer == NULL ) {
 		ri.Error( ERR_FATAL, "gles3: can't allocate geometry host buffer" );
@@ -100,16 +102,33 @@ static void gles3_create_geometry_buffers( void )
 
 	glGenBuffers( 1, &vk.vertex_buffer );
 	glBindBuffer( GL_ARRAY_BUFFER, vk.vertex_buffer );
-	glBufferData( GL_ARRAY_BUFFER, VERTEX_BUFFER_SIZE, NULL, GL_STREAM_DRAW );
+	glBufferData( GL_ARRAY_BUFFER, vk.geometry_buffer_size, NULL, GL_STREAM_DRAW );
 
 	glGenBuffers( 1, &vk.index_buffer );
 	glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, vk.index_buffer );
-	glBufferData( GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE, NULL, GL_STREAM_DRAW );
+	glBufferData( GL_ELEMENT_ARRAY_BUFFER, vk.index_buffer_size, NULL, GL_STREAM_DRAW );
 
 	glBindBuffer( GL_ARRAY_BUFFER, 0 );
 	glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
 
 	gles3_geometry_buffer_reset();
+}
+
+// Counterpart of rd-vulkan vk_resize_geometry_buffer (vk_frame.cpp:1296):
+// a frame that overflowed the streaming buffers records the size it needed
+// and skips its draws; the buffers are grown here, at end of that frame.
+void gles3_resize_geometry_buffers( void )
+{
+	uint32_t vertex_size = vk.geometry_buffer_size_new ? vk.geometry_buffer_size_new : vk.geometry_buffer_size;
+	uint32_t index_size = vk.index_buffer_size_new ? vk.index_buffer_size_new : vk.index_buffer_size;
+
+	glBindBuffer( GL_ARRAY_BUFFER, 0 );
+	glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
+
+	gles3_create_geometry_buffers( vertex_size, index_size );
+
+	ri.Printf( PRINT_DEVELOPER, "...geometry buffers resized to %iK vertex / %iK index\n",
+		(int)( vk.geometry_buffer_size / 1024 ), (int)( vk.index_buffer_size / 1024 ) );
 }
 
 static void vk_render_splash( void )
@@ -215,7 +234,7 @@ void vk_initialize( void )
 	vk.samplers.filter_min = GL_LINEAR_MIPMAP_LINEAR;
 	vk.samplers.filter_max = GL_LINEAR;
 
-	gles3_create_geometry_buffers();
+	gles3_create_geometry_buffers( VERTEX_BUFFER_SIZE, INDEX_BUFFER_SIZE );
 	gles3_init_programs();
 
 	vk.pipelines_count = 0;

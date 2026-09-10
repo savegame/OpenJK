@@ -516,7 +516,9 @@ typedef struct {
 	GLuint			index_buffer;		// streaming index buffer
 	byte			*geometry_buffer;	// host shadow, malloc'd
 	uint32_t		geometry_buffer_size;
-	uint32_t		geometry_buffer_size_new;	// set on overflow: skip draws this frame
+	uint32_t		geometry_buffer_size_new;	// on overflow: required size, frame's draws are skipped
+	uint32_t		index_buffer_size;
+	uint32_t		index_buffer_size_new;		// same contract for the index stream
 	uint32_t		vertex_buffer_offset;
 	uint32_t		index_buffer_offset;
 

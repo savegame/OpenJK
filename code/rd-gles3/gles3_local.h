@@ -53,6 +53,7 @@ void	gles3_update_depth_range( Vk_Depth_Range depth_range );
 // geometry streaming: upload staged host data to the VBO/IBO
 void	gles3_flush_geometry( void );
 void	gles3_index_stage_destroy( void );
+void	gles3_resize_geometry_buffers( void );
 
 // uniform staging (gles3_geometry.cpp)
 void	gles3_uniform_reset( void );

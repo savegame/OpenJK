@@ -328,11 +328,12 @@ void gles3_geometry_buffer_reset( void )
 	vk.vertex_buffer_offset = 0;
 	vk.index_buffer_offset = 0;
 	vk.geometry_buffer_size_new = 0;
+	vk.index_buffer_size_new = 0;
 }
 
 qboolean gles3_geometry_buffer_overflow( void )
 {
-	return vk.geometry_buffer_size_new ? qtrue : qfalse;
+	return ( vk.geometry_buffer_size_new || vk.index_buffer_size_new ) ? qtrue : qfalse;
 }
 
 // Reserve `size` bytes in a host-side region; returns host pointer and the
@@ -346,7 +347,11 @@ byte *gles3_geometry_buffer_map( uint32_t *offset, uint32_t size )
 	aligned = PAD( vk.vertex_buffer_offset, 16 );
 
 	if ( aligned + size > vk.geometry_buffer_size ) {
-		vk.geometry_buffer_size_new = 1;
+		// same contract as rd-vulkan vk_bind_attr: record the size the frame
+		// would have needed, skip the rest of it, grow the buffer at end of
+		// frame.  Without the skip the stale offsets of the previous draw
+		// would be reused and the scene would flicker with garbage geometry.
+		vk.geometry_buffer_size_new = log2pad( aligned + size, 1 );
 		return NULL;
 	}
 
@@ -361,14 +366,14 @@ byte *gles3_geometry_buffer_map( uint32_t *offset, uint32_t size )
 byte *gles3_index_buffer_map( uint32_t *offset, uint32_t size )
 {
 	if ( s_index_stage == NULL ) {
-		s_index_stage = (byte*)malloc( INDEX_BUFFER_SIZE );
+		s_index_stage = (byte*)malloc( vk.index_buffer_size );
 		if ( s_index_stage == NULL ) {
 			ri.Error( ERR_FATAL, "gles3: can't allocate index stage buffer" );
 		}
 	}
 
-	if ( vk.index_buffer_offset + size > INDEX_BUFFER_SIZE ) {
-		vk.geometry_buffer_size_new = 1;
+	if ( vk.index_buffer_offset + size > vk.index_buffer_size ) {
+		vk.index_buffer_size_new = log2pad( vk.index_buffer_offset + size, 1 );
 		return NULL;
 	}
 
@@ -414,6 +419,11 @@ void vk_begin_frame( void )
 
 void vk_end_frame( void )
 {
+	// rd-vulkan grows the geometry buffer at end of frame after an overflow
+	// (vk_frame.cpp:1415 -> vk_resize_geometry_buffer); one frame is lost.
+	if ( vk.geometry_buffer_size_new || vk.index_buffer_size_new )
+		gles3_resize_geometry_buffers();
+
 	glBindBuffer( GL_ARRAY_BUFFER, 0 );
 	glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
 }
