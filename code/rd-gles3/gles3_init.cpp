@@ -251,6 +251,20 @@ void vk_create_window( void )
 		windowDesc.gl.majorVersion = 3;
 		windowDesc.gl.minorVersion = 0;
 
+		// Mesa DRI3 (host verification, GLX ES contexts): glXSwapBuffers
+		// throttles on present-completion events (xcb_wait_for_special_event).
+		// On X servers whose present path degenerates (observed here: the
+		// loading screen and the first 3D frame after map load each stalled
+		// seconds-to-forever in SDL_GL_SwapWindow, wchan=do_poll), the game
+		// loop freezes while the GPU is idle. vblank_mode=0 makes Mesa
+		// present without vsync completion waits. Must be set before the
+		// GL library/driver is initialized, i.e. before WIN_Init creates
+		// the window and the first context. Harmless on non-Mesa stacks
+		// (EGL/Wayland on the device ignore it).
+		if (getenv( "vblank_mode" ) == NULL) {
+			setenv( "vblank_mode", "0", 0 );
+		}
+
 		glConfig.deviceSupportsGamma = qfalse;
 		Com_Memset(&glConfig, 0, sizeof(glConfig));
 
