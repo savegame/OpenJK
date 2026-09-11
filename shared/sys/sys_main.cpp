@@ -525,6 +525,11 @@ void *Sys_LoadLegacyGameDll( const char *name, VMMainProc **vmMain, SystemCallPr
 		#endif
 					basepath,
 					cdpath,
+		#ifdef AURORA
+					// see Sys_LoadDll: bundled modules live in the RPM's lib
+					// dir, not next to the binary or under fs_basepath.
+					"/usr/share/" AURORA_ORG "." AURORA_APP "/lib",
+		#endif
 				};
 				size_t numPaths = ARRAY_LEN( searchPaths );
 
@@ -583,6 +588,13 @@ void *Sys_LoadSPGameDll( const char *name, GetGameAPIProc **GetGameAPI )
 #endif
 			basepath,
 			cdpath,
+#ifdef AURORA
+			// see Sys_LoadDll: bundled modules (jagame) live in the RPM's
+			// lib dir, not next to the binary or under fs_basepath/fs_homepath.
+			// SEARCH_PATH_ROOT below tries this path verbatim, matching the
+			// flat layout /usr/share/<org>.<app>/lib installs into.
+			"/usr/share/" AURORA_ORG "." AURORA_APP "/lib",
+#endif
 		};
 		size_t numPaths = ARRAY_LEN( searchPaths );
 
@@ -658,6 +670,11 @@ void *Sys_LoadGameDll( const char *name, GetModuleAPIProc **moduleAPI )
 #endif
 					basepath,
 					cdpath,
+#ifdef AURORA
+					// see Sys_LoadDll: bundled modules live in the RPM's lib
+					// dir, not next to the binary or under fs_basepath.
+					"/usr/share/" AURORA_ORG "." AURORA_APP "/lib",
+#endif
 				};
 				size_t numPaths = ARRAY_LEN( searchPaths );
 
