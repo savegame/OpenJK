@@ -199,87 +199,80 @@ void ForceAlpha(unsigned char *dstColors, int TR_ForceEntAlpha)
 
 // Upload the current uniform block + MVP to the active program.
 // g_cur_def is set by vk_bind_pipeline and carries the per-pipeline
-// fixed color for the USE_FIXED_COLOR variants.
+// fixed color for the USE_FIXED_COLOR variants. g_cur_locs is the uniform
+// location table for the currently bound program, resolved once at link
+// time (gles3_shaders.cpp) and cached in vk.pipelines[].locs - NOT queried
+// from the driver here. Querying glGetUniformLocation (and the active
+// program via glGetIntegerv) on every draw call is a synchronous
+// driver round trip: cheap on desktop Mesa, but a major bottleneck on
+// mobile GLES3 drivers and the prime suspect for the on-device menu
+// slowdown - hence resolving locations once and only calling glUniform*
+// here.
 static const Vk_Pipeline_Def *g_cur_def;
+static const gles3_uniform_locs_t *g_cur_locs;
 
 void gles3_apply_uniforms( void )
 {
-	GLint loc;
-	GLuint program;
 	const vkUniform_t *u = &vk.uniform;
+	const gles3_uniform_locs_t *l = g_cur_locs;
 
-	glGetIntegerv( 0x8B8D /*GL_CURRENT_PROGRAM*/, (GLint*)&program ); // GL_CURRENT_PROGRAM
+	if ( !l )
+		return;
 
-	loc = glGetUniformLocation( program, "u_MVP" );
-	if ( loc >= 0 )
-		glUniformMatrix4fv( loc, 1, GL_FALSE, g_mvp );
+	if ( l->u_MVP >= 0 )
+		glUniformMatrix4fv( l->u_MVP, 1, GL_FALSE, g_mvp );
 
-	loc = glGetUniformLocation( program, "u_ModelMatrix" );
-	if ( loc >= 0 )
-		glUniformMatrix4fv( loc, 1, GL_FALSE, u->modelMatrix );
+	if ( l->u_ModelMatrix >= 0 )
+		glUniformMatrix4fv( l->u_ModelMatrix, 1, GL_FALSE, u->modelMatrix );
 
-	loc = glGetUniformLocation( program, "u_EyePos" );
-	if ( loc >= 0 )
-		glUniform4fv( loc, 1, u->eyePos );
+	if ( l->u_EyePos >= 0 )
+		glUniform4fv( l->u_EyePos, 1, u->eyePos );
 
-	loc = glGetUniformLocation( program, "u_LightPos" );
-	if ( loc >= 0 )
-		glUniform4fv( loc, 1, u->lightPos );
+	if ( l->u_LightPos >= 0 )
+		glUniform4fv( l->u_LightPos, 1, u->lightPos );
 
-	loc = glGetUniformLocation( program, "u_LightColor" );
-	if ( loc >= 0 )
-		glUniform4fv( loc, 1, u->lightColor );
+	if ( l->u_LightColor >= 0 )
+		glUniform4fv( l->u_LightColor, 1, u->lightColor );
 
-	loc = glGetUniformLocation( program, "u_LightVector" );
-	if ( loc >= 0 )
-		glUniform4fv( loc, 1, u->lightVector );
+	if ( l->u_LightVector >= 0 )
+		glUniform4fv( l->u_LightVector, 1, u->lightVector );
 
-	loc = glGetUniformLocation( program, "u_FogDistanceVector" );
-	if ( loc >= 0 )
-		glUniform4fv( loc, 1, u->fog.fogDistanceVector );
+	if ( l->u_FogDistanceVector >= 0 )
+		glUniform4fv( l->u_FogDistanceVector, 1, u->fog.fogDistanceVector );
 
-	loc = glGetUniformLocation( program, "u_FogDepthVector" );
-	if ( loc >= 0 )
-		glUniform4fv( loc, 1, u->fog.fogDepthVector );
+	if ( l->u_FogDepthVector >= 0 )
+		glUniform4fv( l->u_FogDepthVector, 1, u->fog.fogDepthVector );
 
-	loc = glGetUniformLocation( program, "u_FogEyeT" );
-	if ( loc >= 0 )
-		glUniform4fv( loc, 1, u->fog.fogEyeT );
+	if ( l->u_FogEyeT >= 0 )
+		glUniform4fv( l->u_FogEyeT, 1, u->fog.fogEyeT );
 
-	loc = glGetUniformLocation( program, "u_FogColor" );
-	if ( loc >= 0 )
-		glUniform4fv( loc, 1, u->fog.fogColor );
+	if ( l->u_FogColor >= 0 )
+		glUniform4fv( l->u_FogColor, 1, u->fog.fogColor );
 
 	// texture unit assignments: bundle0..2 -> 0..2, fog -> 3
-	loc = glGetUniformLocation( program, "u_Texture0" );
-	if ( loc >= 0 )
-		glUniform1i( loc, 0 );
+	if ( l->u_Texture0 >= 0 )
+		glUniform1i( l->u_Texture0, 0 );
 
-	loc = glGetUniformLocation( program, "u_Texture1" );
-	if ( loc >= 0 )
-		glUniform1i( loc, 1 );
+	if ( l->u_Texture1 >= 0 )
+		glUniform1i( l->u_Texture1, 1 );
 
-	loc = glGetUniformLocation( program, "u_Texture2" );
-	if ( loc >= 0 )
-		glUniform1i( loc, 2 );
+	if ( l->u_Texture2 >= 0 )
+		glUniform1i( l->u_Texture2, 2 );
 
-	loc = glGetUniformLocation( program, "u_TextureFog" );
-	if ( loc >= 0 )
-		glUniform1i( loc, 3 );
+	if ( l->u_TextureFog >= 0 )
+		glUniform1i( l->u_TextureFog, 3 );
 
-	loc = glGetUniformLocation( program, "u_FixedColor" );
-	if ( loc >= 0 ) {
+	if ( l->u_FixedColor >= 0 ) {
 		if ( g_cur_def ) {
-			glUniform4f( loc, g_cur_def->color.rgb / 255.0f, g_cur_def->color.rgb / 255.0f,
+			glUniform4f( l->u_FixedColor, g_cur_def->color.rgb / 255.0f, g_cur_def->color.rgb / 255.0f,
 						 g_cur_def->color.rgb / 255.0f, g_cur_def->color.alpha / 255.0f );
 		} else {
-			glUniform4f( loc, 1.0f, 1.0f, 1.0f, 1.0f );
+			glUniform4f( l->u_FixedColor, 1.0f, 1.0f, 1.0f, 1.0f );
 		}
 	}
 
 	// alpha test threshold (u_AlphaTest), matching the vk specialization values
-	loc = glGetUniformLocation( program, "u_AlphaTest" );
-	if ( loc >= 0 ) {
+	if ( l->u_AlphaTest >= 0 ) {
 		float value = 0.0f;
 		if ( g_cur_def ) {
 			switch ( g_cur_def->state_bits & GLS_ATEST_BITS ) {
@@ -290,7 +283,7 @@ void gles3_apply_uniforms( void )
 				default: break;
 			}
 		}
-		glUniform1f( loc, value );
+		glUniform1f( l->u_AlphaTest, value );
 	}
 }
 
@@ -479,8 +472,9 @@ void vk_bind_pipeline( uint32_t pipeline )
 	g_cur_def = def;
 
 	if ( vk.pipelines[pipeline].program == 0 ) {
-		vk.pipelines[pipeline].program = gles3_get_program( def );
+		vk.pipelines[pipeline].program = gles3_get_program( def, &vk.pipelines[pipeline].locs );
 	}
+	g_cur_locs = vk.pipelines[pipeline].locs;
 
 	// primitive mode for vk_draw_geometry (ES3 has no glPolygonMode; the
 	// wireframe debug pipelines use LINE_LIST like quake3e renderergles3)

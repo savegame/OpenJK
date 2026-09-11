@@ -335,9 +335,32 @@ typedef struct {
 	} color;
 } Vk_Pipeline_Def;
 
+// Uniform locations for one linked program, resolved once at link time
+// (gles3_shaders.cpp) instead of being queried from the driver on every
+// draw call (see gles3_apply_uniforms in gles3_geometry.cpp).
+typedef struct gles3_uniform_locs_s {
+	GLint	u_MVP;
+	GLint	u_ModelMatrix;
+	GLint	u_EyePos;
+	GLint	u_LightPos;
+	GLint	u_LightColor;
+	GLint	u_LightVector;
+	GLint	u_FogDistanceVector;
+	GLint	u_FogDepthVector;
+	GLint	u_FogEyeT;
+	GLint	u_FogColor;
+	GLint	u_Texture0;
+	GLint	u_Texture1;
+	GLint	u_Texture2;
+	GLint	u_TextureFog;
+	GLint	u_FixedColor;
+	GLint	u_AlphaTest;
+} gles3_uniform_locs_t;
+
 typedef struct VK_Pipeline {
 	Vk_Pipeline_Def def;
 	GLuint			program;
+	const gles3_uniform_locs_t *locs;
 } VK_Pipeline_t;
 
 typedef struct vktcMod_s {
@@ -671,7 +694,7 @@ void		R_DebugGraphics( void );
 // gles3 shader/program cache (gles3_shaders.cpp)
 void		gles3_init_programs( void );
 void		gles3_destroy_programs( void );
-GLuint		gles3_get_program( const Vk_Pipeline_Def *def );
+GLuint		gles3_get_program( const Vk_Pipeline_Def *def, const gles3_uniform_locs_t **out_locs );
 
 // gles3 geometry streaming helpers (gles3_frame.cpp)
 void		gles3_geometry_buffer_reset( void );

@@ -47,6 +47,7 @@ typedef struct gles3_prog_s {
 	int			def_fog_stage;
 	int			def_atest;
 	int			def_acff;
+	gles3_uniform_locs_t locs;
 } gles3_prog_t;
 
 static gles3_prog_t g_progs[512];
@@ -535,6 +536,31 @@ static GLuint gles3_compile_shader( GLenum type, const char *src, const char *de
 	return shader;
 }
 
+// Resolve every uniform location once, right after linking, instead of
+// asking the driver for it on every draw call (gles3_apply_uniforms used to
+// call glGetUniformLocation ~15 times plus glGetIntegerv(GL_CURRENT_PROGRAM)
+// per draw - cheap on desktop Mesa, a synchronous driver round trip on
+// mobile GLES3 drivers, and the prime suspect for menu slowdowns on device).
+static void gles3_resolve_uniform_locs( GLuint program, gles3_uniform_locs_t *locs )
+{
+	locs->u_MVP				= glGetUniformLocation( program, "u_MVP" );
+	locs->u_ModelMatrix		= glGetUniformLocation( program, "u_ModelMatrix" );
+	locs->u_EyePos			= glGetUniformLocation( program, "u_EyePos" );
+	locs->u_LightPos		= glGetUniformLocation( program, "u_LightPos" );
+	locs->u_LightColor		= glGetUniformLocation( program, "u_LightColor" );
+	locs->u_LightVector		= glGetUniformLocation( program, "u_LightVector" );
+	locs->u_FogDistanceVector = glGetUniformLocation( program, "u_FogDistanceVector" );
+	locs->u_FogDepthVector	= glGetUniformLocation( program, "u_FogDepthVector" );
+	locs->u_FogEyeT			= glGetUniformLocation( program, "u_FogEyeT" );
+	locs->u_FogColor		= glGetUniformLocation( program, "u_FogColor" );
+	locs->u_Texture0		= glGetUniformLocation( program, "u_Texture0" );
+	locs->u_Texture1		= glGetUniformLocation( program, "u_Texture1" );
+	locs->u_Texture2		= glGetUniformLocation( program, "u_Texture2" );
+	locs->u_TextureFog		= glGetUniformLocation( program, "u_TextureFog" );
+	locs->u_FixedColor		= glGetUniformLocation( program, "u_FixedColor" );
+	locs->u_AlphaTest		= glGetUniformLocation( program, "u_AlphaTest" );
+}
+
 static GLuint gles3_link_program( const char *vs_src, const char *vs_defines, const char *fs_src, const char *fs_defines )
 {
 	GLuint vs, fs, program;
@@ -702,7 +728,7 @@ static void gles3_gen_defines( const Vk_Pipeline_Def *def, const char **vs_defin
 // Returns a cached program for the shader class of def.  The cache key covers
 // the shader type and the variant bits (fog stage, alpha test, acff); blend
 // funcs, depth, cull are dynamic GL state applied by gles3_set_state.
-GLuint gles3_get_program( const Vk_Pipeline_Def *def )
+GLuint gles3_get_program( const Vk_Pipeline_Def *def, const gles3_uniform_locs_t **out_locs )
 {
 	const char *vs_src = VS_GEN, *fs_src = FS_GEN;
 	const char *vs_defines = "", *fs_defines = "";
@@ -775,8 +801,11 @@ GLuint gles3_get_program( const Vk_Pipeline_Def *def )
 		if ( g_progs[i].def_shader_type == (int)def->shader_type &&
 			 g_progs[i].def_fog_stage == (int)def->fog_stage &&
 			 g_progs[i].def_atest == atest &&
-			 g_progs[i].def_acff == (int)def->acff )
+			 g_progs[i].def_acff == (int)def->acff ) {
+			if ( out_locs )
+				*out_locs = &g_progs[i].locs;
 			return g_progs[i].program;
+		}
 	}
 
 	if ( g_progs_count >= (int)ARRAY_LEN( g_progs ) ) {
@@ -788,7 +817,10 @@ GLuint gles3_get_program( const Vk_Pipeline_Def *def )
 	g_progs[g_progs_count].def_fog_stage = (int)def->fog_stage;
 	g_progs[g_progs_count].def_atest = atest;
 	g_progs[g_progs_count].def_acff = (int)def->acff;
+	gles3_resolve_uniform_locs( g_progs[g_progs_count].program, &g_progs[g_progs_count].locs );
 	g_progs_count++;
 
+	if ( out_locs )
+		*out_locs = &g_progs[g_progs_count - 1].locs;
 	return g_progs[g_progs_count - 1].program;
 }
