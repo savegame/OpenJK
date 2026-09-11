@@ -328,6 +328,12 @@ void *Sys_LoadDll( const char *name, qboolean useSystemLib )
 	const char *searchPaths[] = {
 		binarypath,
 		basepath,
+#ifdef AURORA
+		// The RPM installs the game/renderer modules next to the bundled
+		// SDL2 under /usr/share/<org>.<app>/lib, while the binary itself
+		// lives in /usr/bin - so Sys_BinaryPath() does not find them.
+		"/usr/share/" AURORA_ORG "." AURORA_APP "/lib",
+#endif
 	};
 	const size_t numPaths = ARRAY_LEN( searchPaths );
 
