@@ -98,25 +98,50 @@ static const char *const FS_FBO_BLIT =
 	"}\n";
 
 // Column-major mat2 values (glUniformMatrix2fv layout: col0.x, col0.y,
-// col1.x, col1.y) per GLES3_FBO_TRANSFORM_*, copied from the vetted Aurora
-// quake3e port (code/renderergles3/gles3.c gles3_fbo_init_rotation_mats) -
-// only NORMAL (identity) is selected before port stage 3 starts calling
-// gles3_fbo_set_rotation with real orientation events; the rest are
-// precomputed now so stage 3 never recomputes anything per-frame
-// (fbo_module.md: "кэшировать всё, что можно").
+// col1.x, col1.y) per GLES3_FBO_TRANSFORM_*, precomputed once so stage 3
+// never recomputes anything per-frame (fbo_module.md: "кэшировать всё, что
+// можно").
+//
+// Direction: wl_output_transform counts COUNTER-clockwise, and fbo_module.md
+// ("Вывод на экран") requires the visible rotation of the content to equal
+// the value handed to wl_surface.set_buffer_transform, because the same enum
+// value goes to both. Since only the quad's vertex POSITIONS are rotated
+// (never the UVs), the content's visible rotation is exactly this matrix's
+// rotation, so these must be genuine CCW rotations of the NDC position:
+//
+//   R(t) * (x, y) = ( x*cos t - y*sin t, x*sin t + y*cos t )
+//     90  -> (-y,  x)   col0 = R*(1,0) = ( 0, 1), col1 = R*(0,1) = (-1, 0)
+//    180  -> (-x, -y)   col0 = (-1, 0),           col1 = ( 0,-1)
+//    270  -> ( y, -x)   col0 = ( 0,-1),           col1 = ( 1, 0)
+//
+// These were previously copied verbatim from the Aurora quake3e port
+// (code/renderergles3/gles3.c gles3_fbo_init_rotation_mats), whose 90 and
+// 270 entries are labelled CCW but hold each other's values - i.e. its "90"
+// is really 90 CW. That port compensates elsewhere, with a constant
+// +2 (mod 4) index offset applied before indexing this table
+// (QUAD_ROTATE_OFFSET, code/sdl/sdl_input.c): for the only two transforms a
+// portrait panel ever uses, 1 and 3, (t + 2) % 4 into a table with 1 and 3
+// swapped lands on exactly the true-CCW matrix for t. Net behaviour there is
+// therefore identical to the plain table below - the swap and the offset
+// cancelled. Copying the table without the offset did not, which is what put
+// the content on screen 180 degrees off (rotating CW where the compositor,
+// told transform=90, expects CCW). Fixed here at the source instead of
+// importing the offset: this port has no hidden extra flip (its identity/
+// NORMAL blit was verified upright in the accepted G2b screenshots), so
+// transform -> matrix is direct, with nothing to cancel.
 static void gles3_fbo_init_rotation_mats( void )
 {
 	vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_NORMAL][0] =  1.0f; vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_NORMAL][1] =  0.0f;
 	vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_NORMAL][2] =  0.0f; vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_NORMAL][3] =  1.0f;
 
-	vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_90][0] =  0.0f; vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_90][1] = -1.0f;
-	vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_90][2] =  1.0f; vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_90][3] =  0.0f;
+	vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_90][0] =  0.0f; vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_90][1] =  1.0f;
+	vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_90][2] = -1.0f; vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_90][3] =  0.0f;
 
 	vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_180][0] = -1.0f; vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_180][1] =  0.0f;
 	vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_180][2] =  0.0f; vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_180][3] = -1.0f;
 
-	vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_270][0] =  0.0f; vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_270][1] =  1.0f;
-	vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_270][2] = -1.0f; vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_270][3] =  0.0f;
+	vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_270][0] =  0.0f; vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_270][1] = -1.0f;
+	vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_270][2] =  1.0f; vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_270][3] =  0.0f;
 }
 
 void gles3_fbo_init_program( void )
