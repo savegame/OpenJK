@@ -25,6 +25,15 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "client/client.h"
 #include "sys/sys_local.h"
 
+#ifdef AURORA
+// Port stage 3 (gameport/docs/fbo_module.md, gameport/docs/sdl2_aurora.md
+// "set_buffer_transform из SDL2-приложения"): wl_surface_set_buffer_transform
+// has no SDL2 wrapper, so the raw Wayland surface handle (via
+// SDL_GetWindowWMInfo) is used directly.
+#include <SDL_syswm.h>
+#include <wayland-client.h>
+#endif
+
 static cvar_t *in_keyboardDebug     = NULL;
 
 static SDL_Joystick *stick = NULL;
@@ -41,6 +50,144 @@ static cvar_t *in_joystickNo        = NULL;
 static cvar_t *in_joystickUseAnalog = NULL;
 
 static SDL_Window *SDL_window = NULL;
+
+#ifdef AURORA
+// ---------------------------------------------------------------------------
+// Port stage 3: device rotation (gameport/docs/fbo_module.md, "Маппинг
+// ориентаций под ориентацию игры" / "Типы дисплеев и интерпретация
+// transform"; gameport/docs/sdl2_aurora.md, "события ориентации дисплея" /
+// "set_buffer_transform из SDL2-приложения").
+//
+// SDL2 has already resolved wl_output::transform against the panel's own
+// native orientation into SDL_DisplayOrientation - raw wl_output events are
+// therefore never touched here, only SDL's own API.
+//
+// The game is landscape-only. On this device the panel is portrait
+// (1080x2400), but the panel type is still detected at runtime rather than
+// hardcoded, exactly as fbo_module.md requires (hardcoding 90/270 would
+// break on a landscape panel or an external monitor).
+// ---------------------------------------------------------------------------
+
+// Cached once when the panel type is determined (Aurora_DeterminePanelType),
+// never recomputed per rotation or per frame - indexed by SDL_DisplayOrientation
+// (UNKNOWN=0, LANDSCAPE=1, LANDSCAPE_FLIPPED=2, PORTRAIT=3, PORTRAIT_FLIPPED=4).
+static int aurora_bufferTransformByOrientation[5];
+
+// Builds aurora_bufferTransformByOrientation for the landscape-only game per
+// fbo_module.md's table: on a portrait panel only 90/270 are ever used (0/180
+// would mean "no rotation", i.e. a portrait buffer - never correct for this
+// game); on a landscape panel only 0/180 are used, matching physical
+// landscape/portrait holds respectively.
+static void Aurora_ComputeTransformTable( qboolean panelIsPortrait )
+{
+	if ( panelIsPortrait )
+	{
+		aurora_bufferTransformByOrientation[SDL_ORIENTATION_UNKNOWN]           = WL_OUTPUT_TRANSFORM_90;
+		aurora_bufferTransformByOrientation[SDL_ORIENTATION_LANDSCAPE]         = WL_OUTPUT_TRANSFORM_90;
+		aurora_bufferTransformByOrientation[SDL_ORIENTATION_LANDSCAPE_FLIPPED] = WL_OUTPUT_TRANSFORM_270;
+		aurora_bufferTransformByOrientation[SDL_ORIENTATION_PORTRAIT]          = WL_OUTPUT_TRANSFORM_270;
+		aurora_bufferTransformByOrientation[SDL_ORIENTATION_PORTRAIT_FLIPPED]  = WL_OUTPUT_TRANSFORM_90;
+	}
+	else
+	{
+		aurora_bufferTransformByOrientation[SDL_ORIENTATION_UNKNOWN]           = WL_OUTPUT_TRANSFORM_NORMAL;
+		aurora_bufferTransformByOrientation[SDL_ORIENTATION_LANDSCAPE]         = WL_OUTPUT_TRANSFORM_NORMAL;
+		aurora_bufferTransformByOrientation[SDL_ORIENTATION_LANDSCAPE_FLIPPED] = WL_OUTPUT_TRANSFORM_180;
+		aurora_bufferTransformByOrientation[SDL_ORIENTATION_PORTRAIT]          = WL_OUTPUT_TRANSFORM_180;
+		aurora_bufferTransformByOrientation[SDL_ORIENTATION_PORTRAIT_FLIPPED]  = WL_OUTPUT_TRANSFORM_NORMAL;
+	}
+}
+
+// Panel type (portrait vs landscape) is read from the *native* display mode,
+// once, here - never re-queried per rotation or per frame (fbo_module.md:
+// "Тип панели... определяется один раз при инициализации... Не пересчитывай
+// тип панели на каждый поворот и тем более на каждый кадр"). Only a display
+// change (window moved to another output) should call this again; this port
+// has no such path yet (single built-in panel), so it is only ever called
+// once, from Aurora_RotationInit below.
+static void Aurora_DeterminePanelType( void )
+{
+	SDL_DisplayMode mode;
+	int display = SDL_GetWindowDisplayIndex( SDL_window );
+	qboolean isPortrait = qtrue; // safe default: this port's target is a phone panel
+
+	if ( display >= 0 && SDL_GetCurrentDisplayMode( display, &mode ) == 0 && mode.w > 0 && mode.h > 0 )
+	{
+		isPortrait = ( mode.h > mode.w ) ? qtrue : qfalse;
+		Com_Printf( "Aurora: display %d native mode %dx%d -> %s panel\n",
+			display, mode.w, mode.h, isPortrait ? "portrait" : "landscape" );
+	}
+	else
+	{
+		Com_DPrintf( "Aurora: SDL_GetCurrentDisplayMode failed (%s), assuming portrait panel\n", SDL_GetError() );
+	}
+
+	Aurora_ComputeTransformTable( isPortrait );
+}
+
+// Applies one orientation change: looks up the buffer transform (already
+// cached by Aurora_DeterminePanelType - no computation here), tells the
+// compositor via wl_surface_set_buffer_transform, and forwards the very same
+// enum value to the FBO module's quad rotation via the "gles3_set_rotation"
+// console command (the renderer is a separate dynamically loaded module,
+// sdl_input.cpp cannot call into it directly - see vk_local.h). One value,
+// two destinations, exactly as fbo_module.md's "Реакция клиента: buffer
+// transform" requires.
+static void Aurora_ApplyOrientation( SDL_DisplayOrientation orientation )
+{
+	int transform;
+	SDL_SysWMinfo wmInfo;
+
+	if ( orientation < SDL_ORIENTATION_UNKNOWN || orientation > SDL_ORIENTATION_PORTRAIT_FLIPPED )
+	{
+		orientation = SDL_ORIENTATION_UNKNOWN;
+	}
+	transform = aurora_bufferTransformByOrientation[orientation];
+
+	SDL_VERSION( &wmInfo.version );
+	if ( SDL_window && SDL_GetWindowWMInfo( SDL_window, &wmInfo )
+		&& wmInfo.subsystem == SDL_SYSWM_WAYLAND && wmInfo.info.wl.surface )
+	{
+		wl_surface_set_buffer_transform( wmInfo.info.wl.surface, transform );
+	}
+	else
+	{
+		Com_DPrintf( "Aurora: no Wayland surface yet, skipping set_buffer_transform\n" );
+	}
+
+	Cbuf_ExecuteText( EXEC_APPEND, va( "gles3_set_rotation %d\n", transform ) );
+
+	Com_DPrintf( "Aurora: orientation %d -> buffer_transform %d\n", orientation, transform );
+}
+
+// Called once, from IN_Init below, right after SDL_window is known. Only
+// determines the panel type / builds the transform table here - safe to
+// do the moment SDL_window exists, no renderer dependency. Applying the
+// CURRENT orientation is deliberately NOT done here: IN_Init() runs from
+// deep inside WIN_Init(), which itself runs *before* vk_initialize() on this
+// very first call (vk_create_window() calls WIN_Init() first, then
+// vk_initialize() - see gles3_init.cpp). gles3_fbo_init_program() (called
+// from vk_initialize) unconditionally resets vk.fbo.transform to NORMAL, so
+// a "gles3_set_rotation" queued this early would just be clobbered a moment
+// later. Worse, SP has a "dead window" startup contract (RE_Shutdown then a
+// second R_Init on the actual map load, see vk_initialize()'s comment) that
+// removes and re-adds the gles3_* console commands in between - a command
+// queued this early can land in the gap and be reported "Unknown command".
+// Aurora_ApplyOrientation() for the initial orientation is instead called
+// from IN_ProcessEvents() below, once, on its very first invocation: that
+// only ever happens from the client's steady per-frame loop (IN_Frame),
+// i.e. strictly after every startup/dead-window dance has finished and the
+// renderer is fully initialized.
+static void Aurora_RotationInit( void )
+{
+	if ( !SDL_window )
+	{
+		return;
+	}
+
+	Aurora_DeterminePanelType();
+}
+#endif // AURORA
 
 #define CTRL(a) ((a)-'a'+1)
 
@@ -646,6 +793,11 @@ void IN_Init( void *windowData )
 	Cvar_SetValue( "com_minimized", ( appState & SDL_WINDOW_MINIMIZED ) != 0 );
 
 	IN_InitJoystick( );
+
+#ifdef AURORA
+	Aurora_RotationInit();
+#endif
+
 	Com_DPrintf( "------------------------------------\n" );
 }
 
@@ -822,6 +974,43 @@ static void IN_ProcessEvents( void )
 	if( !SDL_WasInit( SDL_INIT_VIDEO ) )
 			return;
 
+#ifdef AURORA
+	// Initial orientation apply - see the comment on Aurora_RotationInit()
+	// above for why this can't happen there (too early: the renderer hasn't
+	// built the FBO/rotation state yet, and SP's own "dead window" startup
+	// contract - RE_Shutdown then a second R_Init once a map actually starts
+	// loading - briefly un-registers and re-registers the gles3_* console
+	// commands, exactly the window a command sent only once could land in
+	// and silently get dropped as "Unknown command"). Launching straight
+	// into a map (device.md's run command passes "+map academy1") drives
+	// cls.state through that whole window before ever reaching CA_ACTIVE.
+	//
+	// Fix: keep resending every frame for as long as the client is still
+	// loading (cls.state neither CA_DISCONNECTED - reached the main menu -
+	// nor CA_ACTIVE - in game), exactly the same "loading" condition
+	// IN_Frame already uses below to gate mouse activation. The very last
+	// resend, the frame loading finishes, is guaranteed to land after the
+	// dead-window dance has fully settled, so it always succeeds - then
+	// this latches and never resends again. Wasteful only across the
+	// handful of loading-screen frames at cold start, never in the
+	// steady-state game loop.
+	{
+		static qboolean aurora_initialOrientationApplied = qfalse;
+		if ( !aurora_initialOrientationApplied && SDL_window )
+		{
+			qboolean stillLoading = (qboolean)( cls.state != CA_DISCONNECTED && cls.state != CA_ACTIVE );
+			int display = SDL_GetWindowDisplayIndex( SDL_window );
+
+			Aurora_ApplyOrientation( display >= 0 ? SDL_GetDisplayOrientation( display ) : SDL_ORIENTATION_UNKNOWN );
+
+			if ( !stillLoading )
+			{
+				aurora_initialOrientationApplied = qtrue;
+			}
+		}
+	}
+#endif
+
 	while( SDL_PollEvent( &e ) )
 	{
 		switch( e.type )
@@ -977,6 +1166,15 @@ static void IN_ProcessEvents( void )
 #endif
 				}
 				break;
+
+#ifdef AURORA
+			case SDL_DISPLAYEVENT:
+				if ( e.display.event == SDL_DISPLAYEVENT_ORIENTATION )
+				{
+					Aurora_ApplyOrientation( (SDL_DisplayOrientation)e.display.data1 );
+				}
+				break;
+#endif
 
 			default:
 				break;

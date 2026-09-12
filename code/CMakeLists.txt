@@ -61,6 +61,14 @@ if(BuildSPEngine OR BuildJK2SPEngine)
 			pkg_check_modules(EGL REQUIRED egl)
 			set(SPEngineIncludeDirectories ${SPEngineIncludeDirectories} ${GLESV2_INCLUDE_DIRS} ${EGL_INCLUDE_DIRS})
 			set(SPEngineLibraries ${SPEngineLibraries} ${GLESV2_LINK_LIBRARIES} ${EGL_LINK_LIBRARIES})
+			# wl_surface_set_buffer_transform (port stage 3, shared/sdl/sdl_input.cpp)
+			# is called directly against the Wayland client library - SDL only
+			# exposes the raw wl_surface* via SDL_GetWindowWMInfo, not a
+			# transform setter of its own (gameport/docs/sdl2_aurora.md, "set_
+			# buffer_transform из SDL2-приложения").
+			pkg_check_modules(WAYLAND_CLIENT REQUIRED wayland-client)
+			set(SPEngineIncludeDirectories ${SPEngineIncludeDirectories} ${WAYLAND_CLIENT_INCLUDE_DIRS})
+			set(SPEngineLibraries ${SPEngineLibraries} ${WAYLAND_CLIENT_LINK_LIBRARIES})
 		else()
 			# OpenGL
 			find_package(OpenGL REQUIRED)
