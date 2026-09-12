@@ -31,7 +31,11 @@ if(BuildSPRdGLES3)
 		)
 
 	# Defines
-	set(SPRDGLES3Defines ${SharedDefines} "RENDERER" "_JK2EXE" ${AuroraDefines})
+	# IMGUI_IMPL_OPENGL_ES3: the vendored ImGui OpenGL3 backend (lib/imgui,
+	# port stage "Тач-UI") picks its GL header/entry points off this define;
+	# this renderer's context is always GLES3 (gles3_shaders.cpp's
+	# "#version 300 es"), never desktop GL.
+	set(SPRDGLES3Defines ${SharedDefines} "RENDERER" "_JK2EXE" "IMGUI_IMPL_OPENGL_ES3" ${AuroraDefines})
 
 	# GHOUL 2 (SP versions, shared with rd-vulkan semantics)
 	set(SPRDGLES3G2Files
@@ -97,9 +101,34 @@ if(BuildSPRdGLES3)
 		"${SPDir}/rd-gles3/gles3_stubs.cpp"
 		"${SPDir}/rd-gles3/vk_image_process.cpp"
 		"${SPDir}/rd-gles3/vk_local.h"
+		"${SPDir}/rd-gles3/gles3_touchui.h"
+		"${SPDir}/rd-gles3/gles3_touchui.cpp"
 		)
 	source_group("renderer" FILES ${SPRDGLES3MainFiles})
 	set(SPRDGLES3Files ${SPRDGLES3Files} ${SPRDGLES3MainFiles})
+
+	# Aurora touch-UI (port stage "Тач-UI (виртуальный геймпад)") - the
+	# ImGui-facing half is kept in its own translation unit on purpose (see
+	# gles3_touchui_draw.h): it includes the real <GLES3/gl3.h> via ImGui's
+	# OpenGL3 backend, which must never meet tr_local.h's own GL_* compat
+	# enum (gles3_api.h's comment explains why). Dear ImGui itself is
+	# vendored under lib/imgui (same sources as gameport/examples/imgui,
+	# the one the launcher stage will also use) rather than referenced from
+	# gameport/, which is not part of the packaged source tree.
+	set(SPRDGLES3TouchUIFiles
+		"${SPDir}/rd-gles3/gles3_touchui_draw.h"
+		"${SPDir}/rd-gles3/gles3_touchui_draw.cpp"
+		"${OpenJKLibDir}/imgui/imgui.h"
+		"${OpenJKLibDir}/imgui/imgui_internal.h"
+		"${OpenJKLibDir}/imgui/imgui.cpp"
+		"${OpenJKLibDir}/imgui/imgui_draw.cpp"
+		"${OpenJKLibDir}/imgui/imgui_tables.cpp"
+		"${OpenJKLibDir}/imgui/imgui_widgets.cpp"
+		"${OpenJKLibDir}/imgui/backends/imgui_impl_opengl3.h"
+		"${OpenJKLibDir}/imgui/backends/imgui_impl_opengl3.cpp"
+		)
+	source_group("renderer\\touchui" FILES ${SPRDGLES3TouchUIFiles})
+	set(SPRDGLES3Files ${SPRDGLES3Files} ${SPRDGLES3TouchUIFiles})
 
 	# shader templates (GLSL 450 sources, reference for later milestone conversions;
 	# G1 uses inline ESSL 300 strings in gles3_shaders.cpp)
@@ -192,6 +221,14 @@ if(BuildSPRdGLES3)
 	list(APPEND SPRDGLES3RendererIncludeDirectories "${SPDir}/rd-common")
 
 	list(APPEND SPRDGLES3RendererIncludeDirectories ${OpenJKLibDir})
+
+	# Vendored Dear ImGui (port stage "Тач-UI"), same sources as
+	# gameport/examples/imgui - see the comment on SPRDGLES3TouchUIFiles
+	# above for why it is copied in rather than referenced from gameport/.
+	list(APPEND SPRDGLES3RendererIncludeDirectories
+		"${OpenJKLibDir}/imgui"
+		"${OpenJKLibDir}/imgui/backends"
+		)
 
 	add_library(${SPRDGLES3Renderer} SHARED ${SPRDGLES3Files})
 
