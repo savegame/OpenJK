@@ -103,11 +103,6 @@ void		gles3_fbo_handle_resize( uint32_t width, uint32_t height );
 // startup and by gles3_fbo_handle_resize on a live resize, so both derive the
 // same thing the same way.
 void		gles3_fbo_output_size_for_window( uint32_t winW, uint32_t winH, uint32_t *outW, uint32_t *outH );
-// Port stage 3: the content rotation to start up with, before any orientation
-// event has been seen - 90 on a portrait window (fbo_module.md's value for a
-// landscape game's unknown/landscape orientation on a portrait panel), NORMAL
-// otherwise.
-int			gles3_fbo_default_transform_for_window( uint32_t winW, uint32_t winH );
 // called once at startup to build the blit shader/program (persists across
 // gles3_fbo_create/destroy calls, which only touch the FBO's own GL objects)
 void		gles3_fbo_init_program( void );

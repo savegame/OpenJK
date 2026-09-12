@@ -173,26 +173,6 @@ void gles3_fbo_output_size_for_window( uint32_t winW, uint32_t winH, uint32_t *o
 	if ( outH ) *outH = winH;
 }
 
-// Port stage 3, remark 1: the transform to start up with, before the first
-// SDL_DISPLAYEVENT_ORIENTATION (or the initial explicit apply) ever reaches
-// "gles3_set_rotation" from shared/sdl/sdl_input.cpp. A portrait window means
-// a portrait panel, where a landscape game's buffer transform is only ever
-// 90 or 270 (fbo_module.md, "Маппинг ориентаций под ориентацию игры") - 90
-// being what that document's table gives for both the landscape hold and the
-// unknown/initial orientation, i.e. exactly what sdl_input.cpp's own
-// aurora_bufferTransformByOrientation[] defaults to. So the very first frame
-// is already landscape instead of rendering portrait until an orientation
-// event happens to arrive.
-int gles3_fbo_default_transform_for_window( uint32_t winW, uint32_t winH )
-{
-#ifdef AURORA
-	if ( winH > winW ) {
-		return GLES3_FBO_TRANSFORM_90;
-	}
-#endif
-	return GLES3_FBO_TRANSFORM_NORMAL;
-}
-
 void gles3_fbo_init_program( void )
 {
 	vk.fbo.blitProgram = gles3_link_program( VS_FBO_BLIT, NULL, FS_FBO_BLIT, NULL );
@@ -211,9 +191,9 @@ void gles3_fbo_init_program( void )
 	// shared/sdl/sdl_input.cpp had already established, leaving the content
 	// portrait while the compositor had already been told the buffer was
 	// landscape. The current transform belongs to the window/orientation,
-	// not to this GL program, and vk_create_window seeds it from the window
-	// shape (gles3_fbo_default_transform_for_window) before the first
-	// vk_initialize() ever runs.
+	// not to this GL program, and vk_create_window seeds it (from the
+	// "cl_auroraInitTransform" cvar - see the comment there) before the
+	// first vk_initialize() ever runs.
 	if ( vk.fbo.transform < GLES3_FBO_TRANSFORM_NORMAL || vk.fbo.transform > GLES3_FBO_TRANSFORM_270 ) {
 		vk.fbo.transform = GLES3_FBO_TRANSFORM_NORMAL;
 	}

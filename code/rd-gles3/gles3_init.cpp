@@ -352,14 +352,38 @@ void vk_create_window( void )
 			glConfig.vidWidth = (int)outW;
 			glConfig.vidHeight = (int)outH;
 
-			// Port stage 3, remark 1: seed the content rotation from the
-			// window shape right here, BEFORE the first vk_initialize(), so
-			// the very first frame is already drawn landscape rather than
-			// staying portrait until an orientation event arrives. Nothing
-			// downstream resets it any more (see gles3_fbo_init_program),
-			// so a later "gles3_set_rotation" from shared/sdl/sdl_input.cpp
-			// simply refines this with the real system orientation.
-			gles3_fbo_set_rotation( gles3_fbo_default_transform_for_window( vk.windowWidth, vk.windowHeight ) );
+			// Port stage 3, remark 1 (fixed): seed the content rotation right
+			// here, BEFORE the first vk_initialize(), so the very first frame
+			// is already drawn correctly rather than staying wrong until a
+			// later orientation event arrives. Nothing downstream resets it
+			// any more (see gles3_fbo_init_program), so a later
+			// "gles3_set_rotation" from shared/sdl/sdl_input.cpp only ever
+			// refines this if the system orientation changes afterwards.
+			//
+			// This used to guess the seed from the window's own shape (fixed
+			// 90 for any portrait window) - correct for only two of the four
+			// physical device holds a portrait panel can start in
+			// (fbo_module.md's "Маппинг ориентаций под ориентацию игры":
+			// landscape/inverted_portrait -> 90, portrait/inverted_landscape
+			// -> 270), upside down (180 degrees off) for the other two until
+			// the player physically rotated the device and a real
+			// SDL_DISPLAYEVENT_ORIENTATION corrected it. rd-gles3 has no SDL
+			// access of its own to ask for the real orientation (separate
+			// dynamically loaded module - see vk_local.h) and the
+			// "gles3_set_rotation" console command doesn't exist yet at this
+			// point in startup (registered later by vk_initialize(), see
+			// tr_init.cpp's commands[] table), so shared/sdl/sdl_input.cpp
+			// (which DOES have SDL access) resolves the real current
+			// orientation through the exact same table the
+			// SDL_DISPLAYEVENT_ORIENTATION handler uses - see
+			// Aurora_TransformForOrientation and Aurora_RotationInit there -
+			// and hands the result across the module boundary via the
+			// "cl_auroraInitTransform" cvar, computed synchronously inside
+			// the ri.WIN_Init() call just above (WIN_Init -> IN_Init ->
+			// Aurora_RotationInit), so it already holds the real value by
+			// the time it's read here. Defaults to GLES3_FBO_TRANSFORM_NORMAL
+			// (0) if unset, e.g. non-Aurora builds, where it is also correct.
+			gles3_fbo_set_rotation( ri.Cvar_VariableIntegerValue( "cl_auroraInitTransform" ) );
 
 			ri.Printf( PRINT_ALL, "gles3: window %ux%u -> output/FBO %dx%d, initial transform %d\n",
 				vk.windowWidth, vk.windowHeight, glConfig.vidWidth, glConfig.vidHeight,

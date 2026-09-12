@@ -125,30 +125,47 @@ static void Aurora_DeterminePanelType( void )
 	Aurora_ComputeTransformTable( isPortrait );
 }
 
-// Applies one orientation change: looks up the buffer transform (already
-// cached by Aurora_DeterminePanelType - no computation here), tells the
-// compositor via wl_surface_set_buffer_transform, and forwards the very same
-// enum value to the FBO module's quad rotation via the "gles3_set_rotation"
-// console command (the renderer is a separate dynamically loaded module,
-// sdl_input.cpp cannot call into it directly - see vk_local.h). One value,
-// two destinations, exactly as fbo_module.md's "Реакция клиента: buffer
-// transform" requires.
-static void Aurora_ApplyOrientation( SDL_DisplayOrientation orientation )
+// The single source of truth for "system orientation -> buffer transform":
+// looks the value up in aurora_bufferTransformByOrientation (already cached
+// by Aurora_DeterminePanelType - no computation here). Used by both the
+// SDL_DISPLAYEVENT_ORIENTATION handler below AND the startup path (see
+// Aurora_RotationInit) - one table, regardless of where the orientation
+// value came from (an event, or a one-off startup query).
+static int Aurora_TransformForOrientation( SDL_DisplayOrientation orientation )
 {
-	int transform;
-	SDL_SysWMinfo wmInfo;
-
 	if ( orientation < SDL_ORIENTATION_UNKNOWN || orientation > SDL_ORIENTATION_PORTRAIT_FLIPPED )
 	{
 		orientation = SDL_ORIENTATION_UNKNOWN;
 	}
-	transform = aurora_bufferTransformByOrientation[orientation];
+	return aurora_bufferTransformByOrientation[orientation];
+}
+
+// Applies one orientation change: resolves the buffer transform via
+// Aurora_TransformForOrientation, tells the compositor via
+// wl_surface_set_buffer_transform, and forwards the very same enum value to
+// the FBO module's quad rotation via the "gles3_set_rotation" console
+// command (the renderer is a separate dynamically loaded module,
+// sdl_input.cpp cannot call into it directly - see vk_local.h). One value,
+// two destinations, exactly as fbo_module.md's "Реакция клиента: buffer
+// transform" requires.
+//
+// Returns qtrue if wl_surface_set_buffer_transform actually reached a real
+// Wayland surface, qfalse if there wasn't one yet (window not mapped by the
+// compositor yet). The caller uses this to know whether the transform still
+// needs to be resent later instead of silently dropping it - see the retry
+// loop in IN_ProcessEvents.
+static qboolean Aurora_ApplyOrientation( SDL_DisplayOrientation orientation )
+{
+	int transform = Aurora_TransformForOrientation( orientation );
+	qboolean delivered = qfalse;
+	SDL_SysWMinfo wmInfo;
 
 	SDL_VERSION( &wmInfo.version );
 	if ( SDL_window && SDL_GetWindowWMInfo( SDL_window, &wmInfo )
 		&& wmInfo.subsystem == SDL_SYSWM_WAYLAND && wmInfo.info.wl.surface )
 	{
 		wl_surface_set_buffer_transform( wmInfo.info.wl.surface, transform );
+		delivered = qtrue;
 	}
 	else
 	{
@@ -158,38 +175,60 @@ static void Aurora_ApplyOrientation( SDL_DisplayOrientation orientation )
 	Cbuf_ExecuteText( EXEC_APPEND, va( "gles3_set_rotation %d\n", transform ) );
 
 	Com_DPrintf( "Aurora: orientation %d -> buffer_transform %d\n", orientation, transform );
+
+	return delivered;
 }
 
 // Called once, from IN_Init below, right after SDL_window is known. Only
 // determines the panel type / builds the transform table here - safe to
 // do the moment SDL_window exists, no renderer dependency. Applying the
-// CURRENT orientation is deliberately NOT done here: IN_Init() runs from
-// deep inside WIN_Init(), which itself runs *before* vk_initialize() on this
-// very first call (vk_create_window() calls WIN_Init() first, then
+// CURRENT orientation via Aurora_ApplyOrientation() (i.e. actually talking to
+// the compositor and to the renderer) is deliberately NOT done here: IN_Init()
+// runs from deep inside WIN_Init(), which itself runs *before* vk_initialize()
+// on this very first call (vk_create_window() calls WIN_Init() first, then
 // vk_initialize() - see gles3_init.cpp), so the gles3_* console commands do
-// not exist yet. Losing the rotation that way no longer leaves the frame
-// portrait, though: vk_create_window seeds the renderer's transform from the
-// window's own shape (gles3_fbo_default_transform_for_window) and
-// gles3_fbo_init_program no longer resets it, so the content is landscape
-// from the very first frame and a "gles3_set_rotation" arriving later only
-// refines it with the real system orientation (port stage 3, remark 1).
-// SP also has a "dead window" startup contract (RE_Shutdown then a
-// second R_Init on the actual map load, see vk_initialize()'s comment) that
-// removes and re-adds the gles3_* console commands in between - a command
-// queued this early can land in the gap and be reported "Unknown command".
-// Aurora_ApplyOrientation() for the initial orientation is instead called
-// from IN_ProcessEvents() below, once, on its very first invocation: that
-// only ever happens from the client's steady per-frame loop (IN_Frame),
-// i.e. strictly after every startup/dead-window dance has finished and the
-// renderer is fully initialized.
+// not exist yet - a "gles3_set_rotation" queued this early would report
+// "Unknown command" and be lost (SP also has a "dead window" startup contract,
+// RE_Shutdown then a second R_Init on the actual map load, see
+// vk_initialize()'s comment, that removes and re-adds the gles3_* console
+// commands again in between). Aurora_ApplyOrientation() for the initial
+// orientation is instead called from IN_ProcessEvents() below, once (well,
+// retried every frame until it actually lands - see the comment there), on
+// its very first invocation: that only ever happens from the client's steady
+// per-frame loop (IN_Frame), i.e. strictly after every startup/dead-window
+// dance has finished and the renderer is fully initialized.
+//
+// That still leaves the handful of frames rendered by vk_create_window /
+// vk_initialize themselves (before IN_ProcessEvents ever runs) with no
+// orientation applied via the console-command path. Rather than have
+// rd-gles3 guess one from the window's shape - fixed 90 for a portrait
+// window, which fbo_module.md's mapping table says is only correct for two
+// of the four physical device holds (landscape, inverted_portrait) and wrong
+// by exactly 180 degrees (upside down) for the other two (portrait,
+// inverted_landscape) - resolve the REAL current orientation right here,
+// through the exact same Aurora_TransformForOrientation table the event
+// handler uses below, and hand it to the renderer across the module boundary
+// via a cvar (rd-gles3 has no SDL access of its own - see vk_local.h - so a
+// direct function call isn't an option, and the console command doesn't
+// exist yet, but a cvar is just a value, always readable). vk_create_window
+// (gles3_init.cpp) reads "cl_auroraInitTransform" as its seed instead of
+// gles3_fbo_default_transform_for_window's old shape-only guess. One table,
+// one source of truth either way - only the origin of the orientation value
+// differs (a one-off query here vs. an event later).
 static void Aurora_RotationInit( void )
 {
+	int display;
+
 	if ( !SDL_window )
 	{
 		return;
 	}
 
 	Aurora_DeterminePanelType();
+
+	display = SDL_GetWindowDisplayIndex( SDL_window );
+	Cvar_SetValue( "cl_auroraInitTransform",
+		Aurora_TransformForOrientation( display >= 0 ? SDL_GetDisplayOrientation( display ) : SDL_ORIENTATION_UNKNOWN ) );
 }
 #endif // AURORA
 
@@ -993,21 +1032,26 @@ static void IN_ProcessEvents( void )
 	// loading (cls.state neither CA_DISCONNECTED - reached the main menu -
 	// nor CA_ACTIVE - in game), exactly the same "loading" condition
 	// IN_Frame already uses below to gate mouse activation. The very last
-	// resend, the frame loading finishes, is guaranteed to land after the
-	// dead-window dance has fully settled, so it always succeeds - then
-	// this latches and never resends again. Wasteful only across the
-	// handful of loading-screen frames at cold start, never in the
-	// steady-state game loop.
+	// resend, once loading finishes, is guaranteed to land after the
+	// dead-window dance has fully settled, so the console-command side
+	// always succeeds by then. The Wayland-surface side (set_buffer_transform)
+	// is separately gated on Aurora_ApplyOrientation's own return value,
+	// not on the loading state: the surface really ought to exist by this
+	// point too (SDL creates it synchronously with the window, long before
+	// any of this runs), but if it somehow doesn't yet, latching here would
+	// silently drop the buffer transform forever - so keep resending every
+	// frame, loading or not, until a real surface has actually received it
+	// at least once. Wasteful only across the handful of frames it can
+	// possibly take, never indefinitely in the steady-state game loop.
 	{
 		static qboolean aurora_initialOrientationApplied = qfalse;
 		if ( !aurora_initialOrientationApplied && SDL_window )
 		{
 			qboolean stillLoading = (qboolean)( cls.state != CA_DISCONNECTED && cls.state != CA_ACTIVE );
 			int display = SDL_GetWindowDisplayIndex( SDL_window );
+			qboolean delivered = Aurora_ApplyOrientation( display >= 0 ? SDL_GetDisplayOrientation( display ) : SDL_ORIENTATION_UNKNOWN );
 
-			Aurora_ApplyOrientation( display >= 0 ? SDL_GetDisplayOrientation( display ) : SDL_ORIENTATION_UNKNOWN );
-
-			if ( !stillLoading )
+			if ( !stillLoading && delivered )
 			{
 				aurora_initialOrientationApplied = qtrue;
 			}
