@@ -46,6 +46,7 @@ fileHandle_t	com_journalFile;
 fileHandle_t	com_journalDataFile;		// config files are written here
 
 cvar_t	*com_speeds;
+cvar_t	*com_showfps;
 cvar_t	*com_developer;
 cvar_t	*com_timescale;
 cvar_t	*com_fixedtime;
@@ -1136,6 +1137,7 @@ void Com_Init( char *commandLine ) {
 		com_fixedtime = Cvar_Get ("fixedtime", "0", CVAR_CHEAT);
 		com_showtrace = Cvar_Get ("com_showtrace", "0", CVAR_CHEAT);
 		com_speeds = Cvar_Get ("com_speeds", "0", 0);
+		com_showfps = Cvar_Get ("com_showfps", "0", CVAR_ARCHIVE_ND);
 
 #ifdef G2_PERFORMANCE_ANALYSIS
 		com_G2Report = Cvar_Get("com_G2Report", "0", 0);
@@ -1484,10 +1486,11 @@ void Com_Frame( void ) {
 			}
 		}
 
-		// --- Aurora perf work: periodic FPS meter to stdout (~2x/sec), always on ---
-		// Independent of com_speeds so it's available on-device with just stdout
-		// captured (ssh | tee). Reports both the rolling average over the
+		// Periodic FPS meter to stdout (~2x/sec), off unless com_showfps is set.
+		// Independent of com_speeds so it can be read on-device with nothing but
+		// stdout captured (ssh | tee). Reports both the rolling average over the
 		// printed window and the instantaneous per-frame value.
+		if ( com_showfps->integer )
 		{
 			static int fpsWindowStartMsec = 0;
 			static int fpsWindowFrames = 0;
