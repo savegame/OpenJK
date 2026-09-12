@@ -86,6 +86,7 @@ if(BuildSPRdGLES3)
 		"${SPDir}/rd-gles3/gles3_local.h"
 		"${SPDir}/rd-gles3/gles3_init.cpp"
 		"${SPDir}/rd-gles3/gles3_frame.cpp"
+		"${SPDir}/rd-gles3/gles3_fbo.cpp"
 		"${SPDir}/rd-gles3/gles3_geometry.cpp"
 		"${SPDir}/rd-gles3/gles3_image.cpp"
 		"${SPDir}/rd-gles3/gles3_pipelines.cpp"

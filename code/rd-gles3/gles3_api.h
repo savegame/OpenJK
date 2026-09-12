@@ -246,6 +246,11 @@ typedef unsigned long long GLuint64;
 #define GL_DEPTH_COMPONENT24			0x81A6
 #define GL_DEPTH24_STENCIL8				0x88F0
 #define GL_FRAMEBUFFER_COMPLETE			0x8CD5
+#define GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT			0x8CD6
+#define GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT	0x8CD7
+#define GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS			0x8CD9
+#define GL_FRAMEBUFFER_UNSUPPORTED						0x8CDD
+#define GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE			0x8D56
 #define GL_READ_FRAMEBUFFER				0x8CA8
 #define GL_DRAW_FRAMEBUFFER				0x8CA9
 
@@ -360,6 +365,7 @@ void glGenRenderbuffers( GLsizei n, GLuint *renderbuffers );
 void glDeleteRenderbuffers( GLsizei n, const GLuint *renderbuffers );
 void glBindRenderbuffer( GLenum target, GLuint renderbuffer );
 void glRenderbufferStorage( GLenum target, GLenum internalformat, GLsizei width, GLsizei height );
+void glInvalidateFramebuffer( GLenum target, GLsizei numAttachments, const GLenum *attachments );
 
 void glReadPixels( GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void *pixels );
 

@@ -313,6 +313,16 @@ typedef enum {
 	RENDER_PASS_COUNT
 } renderPass_t;
 
+// Values of the Wayland wl_output_transform enum (port stage 3 will read the
+// real value from the compositor via SDL2's SDL_DisplayOrientation; only
+// GLES3_FBO_TRANSFORM_NORMAL is produced/consumed in stage 2). Kept as a
+// plain int rather than pulling in a wayland-client dependency here - see
+// gameport/docs/fbo_module.md, "Поворот устройства: output transform".
+#define GLES3_FBO_TRANSFORM_NORMAL		0
+#define GLES3_FBO_TRANSFORM_90			1
+#define GLES3_FBO_TRANSFORM_180		2
+#define GLES3_FBO_TRANSFORM_270		3
+
 typedef struct {
 	uint32_t				state_bits; // GLS_XXX flags
 	cullType_t				face_culling;// cullType_t
@@ -477,6 +487,40 @@ typedef struct vk_tess_s {
 
 #define MAX_VK_PIPELINES				( 1024 + 256 )
 
+// Port stage 2 (gameport/docs/fbo_module.md): renders into this offscreen
+// FBO instead of the window's default framebuffer, then a single textured
+// quad blits it to the screen. Exists so a later stage (content rotation,
+// port stage 3) can rotate/scale the output quad without touching any
+// scene-rendering code above it - see gles3_fbo.cpp.
+//
+// Deliberately a field of its own rather than reusing vk.fboActive /
+// vk.offscreenRender / vk.blitEnabled above: those three gate quake3e/
+// rd-vulkan-inherited behaviour this port does not want touched here -
+// vk.fboActive in particular flips R_SetColorMappings to a software-gamma
+// path and enables the `screenMap` shader keyword (tr_shader.cpp), neither
+// implemented in rd-gles3 yet. rd-vulkan (this port's accepted visual
+// reference) runs with r_fbo 0 / vk.fboActive off by default, so leaving it
+// off here keeps gamma/screenMap behaviour identical to the reference the
+// G2b screenshots were graded against; only the new offscreen-then-blit
+// bounce is added on top.
+typedef struct {
+	qboolean	active;			// false if creation failed; caller falls back to direct backbuffer rendering
+	GLuint		framebuffer;
+	GLuint		colorTexture;
+	GLuint		depthStencilBuffer;	// renderbuffer; combined depth+stencil, or depth-only fallback (see gles3_fbo.cpp)
+	qboolean	hasStencil;		// qfalse when the depth-only fallback was used
+	uint32_t	width;
+	uint32_t	height;
+
+	GLuint		blitProgram;
+	GLint		blitLoc_rotation;	// mat2 uniform, applied to the quad's vertex positions only
+	GLint		blitLoc_texture0;
+
+	float		scale;			// output scale factor, default 1.0 (used starting port stage 3)
+	int			transform;		// current GLES3_FBO_TRANSFORM_*, default NORMAL (used starting port stage 3)
+	float		rotationMats[4][4];	// mat2 (column-major) per GLES3_FBO_TRANSFORM_* value, precomputed once at init
+} Gles3_Fbo_t;
+
 // Vk_Instance contains backend resources that persist the renderer lifetime,
 // initialized/deinitialized by vk_initialize/vk_shutdown.
 typedef struct {
@@ -602,6 +646,8 @@ typedef struct {
 	struct {
 		GLuint		image;
 	} capture;
+
+	Gles3_Fbo_t		fbo;			// port stage 2 offscreen render target, see gles3_fbo.cpp
 
 } Vk_Instance;
 

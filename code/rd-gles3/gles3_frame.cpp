@@ -414,6 +414,11 @@ void vk_begin_frame( void )
 	glBindBuffer( GL_ARRAY_BUFFER, vk.vertex_buffer );
 	glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, vk.index_buffer );
 
+	// Port stage 2: render the whole frame into the offscreen FBO instead of
+	// the default framebuffer (gles3_fbo.cpp); a no-op bind to the default
+	// framebuffer if the FBO failed to build (vk.fbo.active false).
+	gles3_fbo_bind();
+
 	// Orphan both streaming buffers' storage once per frame (re-specify with
 	// the same size, NULL data) instead of letting glBufferSubData/
 	// glMapBufferRange reuse the previous frame's storage starting at offset
@@ -443,6 +448,23 @@ void vk_end_frame( void )
 
 void vk_present_frame( void )
 {
+	// Port stage 2: the scene was rendered into vk.fbo (vk_begin_frame above)
+	// rather than the default framebuffer; screenshot/video readback already
+	// happened off that FBO earlier in RB_SwapBuffers (tr_backend.cpp), in
+	// the same call order as before this stage existed, so it is unaffected.
+	// What's left is showing the FBO's content on screen: bind the window's
+	// real framebuffer and blit the FBO's color texture into it with a
+	// single quad (gles3_fbo_blit_to_screen, gles3_fbo.cpp) - a no-op if the
+	// FBO never came up (vk.fbo.active false), leaving direct backbuffer
+	// rendering exactly as it was pre-stage-2.
+	//
+	// Discard vk.fbo's depth/stencil content first, while vk.fbo is still
+	// bound: measurably cheaper on the device's tile-based GPU than writing
+	// it back to memory for no reason (see gles3_fbo_invalidate_depth_stencil).
+	gles3_fbo_invalidate_depth_stencil();
+	glBindFramebuffer( GL_FRAMEBUFFER, 0 );
+	gles3_fbo_blit_to_screen();
+
 	// EGL_SWAP_BEHAVIOR is left at the driver default (EGL_BUFFER_DESTROYED,
 	// tile-friendly - no reload of the previous frame's backbuffer). It used
 	// to be forced to EGL_BUFFER_PRESERVED at init unconditionally, on the

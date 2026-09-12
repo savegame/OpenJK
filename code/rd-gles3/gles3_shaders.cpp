@@ -514,7 +514,7 @@ static const char *const FS_DF =
 // compile & cache
 // ---------------------------------------------------------------------------
 
-static GLuint gles3_compile_shader( GLenum type, const char *src, const char *defines )
+GLuint gles3_compile_shader( GLenum type, const char *src, const char *defines )
 {
 	char buf[16384];
 	const GLchar *src_ptr;
@@ -561,7 +561,7 @@ static void gles3_resolve_uniform_locs( GLuint program, gles3_uniform_locs_t *lo
 	locs->u_AlphaTest		= glGetUniformLocation( program, "u_AlphaTest" );
 }
 
-static GLuint gles3_link_program( const char *vs_src, const char *vs_defines, const char *fs_src, const char *fs_defines )
+GLuint gles3_link_program( const char *vs_src, const char *vs_defines, const char *fs_src, const char *fs_defines )
 {
 	GLuint vs, fs, program;
 	GLint status;

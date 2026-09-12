@@ -144,6 +144,8 @@ void vk_initialize( void )
 	if ( vk.active ) {
 		// idempotent re-init (SP dead-window contract: R_Init after RE_Shutdown)
 		gles3_destroy_programs();
+		gles3_fbo_destroy_program();
+		gles3_fbo_destroy();
 	}
 
 	// GL strings / config
@@ -239,6 +241,21 @@ void vk_initialize( void )
 	gles3_create_geometry_buffers( VERTEX_BUFFER_SIZE, INDEX_BUFFER_SIZE );
 	gles3_init_programs();
 
+	// Port stage 2 (gameport/docs/fbo_module.md): render into an offscreen
+	// FBO sized to match the window instead of straight into the default
+	// framebuffer, then blit it to the screen with a quad. Sized to
+	// renderWidth/renderHeight (== vidWidth/vidHeight, scale 1.0 here) - the
+	// same "logical" render target size gles3_get_viewport_rect already uses
+	// (gles3_frame.cpp), so nothing else has to change to keep the viewport
+	// correct.
+	gles3_fbo_init_program();
+	// gles3_fbo_resize(), not a bare gles3_fbo_create(): this is the call
+	// vid_restart lands on after a real window resize (shared/sdl/
+	// sdl_input.cpp SDL_WINDOWEVENT_SIZE_CHANGED -> "vid_restart" ->
+	// CL_InitRef -> RE_Init -> vk_create_window -> here), with
+	// vk.renderWidth/Height already updated to the new size above.
+	gles3_fbo_resize( vk.renderWidth, vk.renderHeight );
+
 	vk.pipelines_count = 0;
 	vk.pipelines_world_base = 0;
 
@@ -327,6 +344,8 @@ void vk_release_resources( void )
 	gles3_destroy_programs();
 	gles3_destroy_geometry_buffers();
 	gles3_uniform_shutdown();
+	gles3_fbo_destroy_program();
+	gles3_fbo_destroy();
 
 	vk.active = qfalse;
 }

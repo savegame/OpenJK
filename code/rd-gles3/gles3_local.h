@@ -61,3 +61,56 @@ void	gles3_uniform_shutdown( void );
 
 // upload vk.uniform + MVP to the active program (called at draw time)
 void	gles3_apply_uniforms( void );
+
+// shader compile/link helpers (gles3_shaders.cpp), reused by gles3_fbo.cpp
+// for the blit-quad program instead of duplicating them
+GLuint	gles3_compile_shader( GLenum type, const char *src, const char *defines );
+GLuint	gles3_link_program( const char *vs_src, const char *vs_defines, const char *fs_src, const char *fs_defines );
+
+// ---------------------------------------------------------------------------
+// Aurora offscreen FBO (gles3_fbo.cpp) - port stage 2,
+// gameport/docs/fbo_module.md. Renders the frame into vk.fbo instead of the
+// default framebuffer, then blits it to the screen with a single textured
+// quad so a later stage can rotate/scale that quad without touching scene
+// rendering. See the vk.fbo (Gles3_Fbo_t) comment in vk_local.h for why this
+// is independent from the legacy vk.fboActive/offscreenRender/blitEnabled.
+// ---------------------------------------------------------------------------
+
+// (re)creates vk.fbo sized to width x height; on failure leaves vk.fbo.active
+// qfalse and the caller renders straight into the default framebuffer, same
+// as before this module existed - never a fatal error
+void		gles3_fbo_create( uint32_t width, uint32_t height );
+void		gles3_fbo_destroy( void );
+// gles3_fbo_create() if width/height actually changed, qtrue if it did
+// (stage 2 callers don't need this yet - vk.renderWidth/Height are static
+// for the process lifetime here - but the resize hook stage 3 needs to call
+// on a real window resize is built now per fbo_module.md's "закладывайся")
+qboolean	gles3_fbo_resize( uint32_t width, uint32_t height );
+// called once at startup to build the blit shader/program (persists across
+// gles3_fbo_create/destroy calls, which only touch the FBO's own GL objects)
+void		gles3_fbo_init_program( void );
+void		gles3_fbo_destroy_program( void );
+
+// binds vk.fbo as the active render target (no-op, i.e. default framebuffer,
+// if vk.fbo.active is false)
+void		gles3_fbo_bind( void );
+// tells the driver vk.fbo's depth/stencil attachment content is no longer
+// needed (the 3D pass is done with it and the blit-quad never reads it) -
+// must be called while vk.fbo.framebuffer is still bound, i.e. before
+// gles3_fbo_blit_to_screen()'s caller switches to the default framebuffer.
+// A no-op if vk.fbo.active is false. See gles3_fbo.cpp for why this matters
+// on tile-based mobile GPUs.
+void		gles3_fbo_invalidate_depth_stencil( void );
+// draws the FBO's color texture into the currently bound framebuffer as a
+// full-viewport quad (rotated per gles3_fbo_set_rotation), then binds the
+// default framebuffer back; no-op if vk.fbo.active is false
+void		gles3_fbo_blit_to_screen( void );
+
+GLuint		gles3_fbo_get_color_texture( void );
+void		gles3_fbo_get_size( uint32_t *width, uint32_t *height );
+
+void		gles3_fbo_set_scale( float scale );
+float		gles3_fbo_get_scale( void );
+
+void		gles3_fbo_set_rotation( int transform );
+int			gles3_fbo_get_rotation( void );
