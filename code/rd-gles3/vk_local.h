@@ -726,6 +726,15 @@ const char	*vk_shadertype_string( Vk_Shader_Type code );
 void		vk_info_f( void );
 void		GfxInfo_f( void );
 
+// Port stage 3 console commands (gles3_fbo.cpp) - the only way
+// shared/sdl/sdl_input.cpp can reach the renderer's gles3_fbo_handle_resize/
+// gles3_fbo_set_rotation: sdl_input.cpp is compiled into the client
+// executable, the renderer is a separate dynamically loaded module (see
+// tr_init.cpp's commands[] table, registered/removed like every other
+// command here).
+void		GLES3_Resize_f( void );
+void		GLES3_SetRotation_f( void );
+
 // CPU image processing (vk_image_process.cpp)
 void		R_LightScaleTexture( byte *in, int inwidth, int inheight, qboolean only_gamma );
 void		ResampleTexture( unsigned *in, int inwidth, int inheight, unsigned *out, int outwidth, int outheight );

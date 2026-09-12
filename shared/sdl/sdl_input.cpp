@@ -944,20 +944,33 @@ static void IN_ProcessEvents( void )
 						// the compositor correcting the fullscreen size after
 						// the window was created) - never fired on a pure
 						// device rotation, which only ever changes the
-						// orientation event (gameport/docs/fbo_module.md,
-						// "Размер окна и буфера при повороте"). vid_restart
-						// re-runs the whole renderer init cascade, which
-						// re-queries the window size (GLimp_SetMode, above)
-						// and rebuilds the offscreen FBO at the new size
-						// (rd-gles3: vk_initialize -> gles3_fbo_resize) -
-						// this is the "resize handler" fbo_module.md asks to
-						// be called manually on a real size change.
+						// orientation event handled below under
+						// SDL_DISPLAYEVENT (gameport/docs/fbo_module.md,
+						// "Размер окна и буфера при повороте").
+						//
+						// A resize is a cheap, single-frame operation: resize
+						// the FBO texture and update the engine's output
+						// dimensions so it recomputes its view/viewport math
+						// - no vid_restart, no CL_ShutdownRef/CL_InitRef,
+						// no asset or level reload, no SDL window
+						// recreation. cls.glconfig is this client's own copy
+						// (updated directly here) and Con_CheckResize() is
+						// the lightweight console-reflow handler the engine
+						// already has for this (cl_console.cpp); the
+						// renderer's own output size/FBO are updated via the
+						// "gles3_resize" command, since sdl_input.cpp cannot
+						// call into the renderer directly (separate
+						// dynamically loaded module, see vk_local.h).
 						int newW = e.window.data1;
 						int newH = e.window.data2;
 
 						if ( newW > 0 && newH > 0 && ( newW != cls.glconfig.vidWidth || newH != cls.glconfig.vidHeight ) )
 						{
-							Cbuf_ExecuteText( EXEC_APPEND, "vid_restart\n" );
+							cls.glconfig.vidWidth = newW;
+							cls.glconfig.vidHeight = newH;
+							Con_CheckResize();
+
+							Cbuf_ExecuteText( EXEC_APPEND, va( "gles3_resize %d %d\n", newW, newH ) );
 						}
 						break;
 					}

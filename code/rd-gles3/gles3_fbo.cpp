@@ -276,6 +276,56 @@ qboolean gles3_fbo_resize( uint32_t width, uint32_t height )
 	return qtrue;
 }
 
+// Port stage 3 (gameport/docs/fbo_module.md, "Размер окна и буфера при
+// повороте"): the full handler for a REAL window/buffer resize, replacing
+// the vid_restart that used to run here (see shared/sdl/sdl_input.cpp
+// history - commit 6b6a32a). A resize is just a resized render target: the
+// FBO's color/depth-stencil storage is rebuilt at the new size and the
+// engine's own idea of "output size" is updated so it recomputes its view/
+// viewport math, all inside the current frame - no CL_ShutdownRef/CL_InitRef
+// cascade, no shader/image reload, no SDL window recreation. This is never
+// called on a pure device rotation: rotation only ever changes
+// gles3_fbo_set_rotation's transform and the Wayland buffer transform
+// (sdl_input.cpp), the buffer size itself never changes for that case.
+void gles3_fbo_handle_resize( uint32_t width, uint32_t height )
+{
+	if ( width == 0 || height == 0 ) {
+		return;
+	}
+	if ( width == (uint32_t)glConfig.vidWidth && height == (uint32_t)glConfig.vidHeight ) {
+		return;
+	}
+
+	glConfig.vidWidth = width;
+	glConfig.vidHeight = height;
+
+	// The rd-gles3 "output size" used every frame by gles3_get_viewport_rect
+	// (gles3_frame.cpp) for the 2D viewport/scissor - renderScaleX/Y are left
+	// alone (r_renderScale is CVAR_LATCH, not something a live resize should
+	// touch; vk_initialize always leaves them at 1.0 in this backend too).
+	vk.renderWidth = width;
+	vk.renderHeight = height;
+
+	gls.windowWidth = width;
+	gls.windowHeight = height;
+	gls.captureWidth = width;
+	gls.captureHeight = height;
+
+	gles3_fbo_resize( width, height );
+
+	// Re-establish the default-framebuffer viewport/scissor immediately
+	// rather than waiting for the next draw call to notice: harmless to do
+	// with raw GL here even though it bypasses the gles3_state cache
+	// (gles3_frame.cpp), because vk_begin_frame() unconditionally calls
+	// gles3_state_cache_invalidate() before the next frame's first draw, so
+	// the cache resyncs for free either way (same reasoning as
+	// gles3_fbo_blit_to_screen() above).
+	glViewport( 0, 0, width, height );
+	glScissor( 0, 0, width, height );
+
+	ri.Printf( PRINT_ALL, "gles3_fbo: window resized to %ux%u\n", width, height );
+}
+
 void gles3_fbo_bind( void )
 {
 	glBindFramebuffer( GL_FRAMEBUFFER, vk.fbo.active ? vk.fbo.framebuffer : 0 );
@@ -393,4 +443,33 @@ void gles3_fbo_blit_to_screen( void )
 	}
 
 	glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
+}
+
+// ---------------------------------------------------------------------------
+// port stage 3 console commands - registered in tr_init.cpp's commands[]
+// table, see the comment on their declaration in vk_local.h
+// ---------------------------------------------------------------------------
+
+void GLES3_Resize_f( void )
+{
+	if ( ri.Cmd_Argc() != 3 ) {
+		ri.Printf( PRINT_ALL, "usage: gles3_resize <width> <height>\n" );
+		return;
+	}
+	gles3_fbo_handle_resize( (uint32_t)atoi( ri.Cmd_Argv( 1 ) ), (uint32_t)atoi( ri.Cmd_Argv( 2 ) ) );
+}
+
+// transform is a raw GLES3_FBO_TRANSFORM_*/wl_output_transform value (0-3) -
+// shared/sdl/sdl_input.cpp already resolved system orientation + panel type
+// down to that single number (gameport/docs/fbo_module.md, "Маппинг
+// ориентаций под ориентацию игры"); this command just hands it to
+// gles3_fbo_set_rotation, which is the only place that picks the active
+// rotation matrix (never in gles3_fbo_blit_to_screen's per-frame draw).
+void GLES3_SetRotation_f( void )
+{
+	if ( ri.Cmd_Argc() != 2 ) {
+		ri.Printf( PRINT_ALL, "usage: gles3_set_rotation <transform 0-3>\n" );
+		return;
+	}
+	gles3_fbo_set_rotation( atoi( ri.Cmd_Argv( 1 ) ) );
 }

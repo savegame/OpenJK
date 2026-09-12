@@ -774,7 +774,12 @@ static consoleCommand_t	commands[] = {
 	{ "r_cleardecals",		RE_ClearDecals },
 	{ "remapSky",			R_RemapSkyShader_f },
 	{ "clearRemaps",		R_ClearRemaps_f },
-	{ "vkinfo",				vk_info_f }
+	{ "vkinfo",				vk_info_f },
+	// Port stage 3 (gameport/docs/fbo_module.md): queued by
+	// shared/sdl/sdl_input.cpp instead of calling into the renderer
+	// directly (separate dynamically loaded module) - see vk_local.h.
+	{ "gles3_resize",		GLES3_Resize_f },
+	{ "gles3_set_rotation",	GLES3_SetRotation_f }
 };
 
 static const size_t numCommands = ARRAY_LEN( commands );

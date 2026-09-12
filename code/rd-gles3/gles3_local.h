@@ -81,11 +81,21 @@ GLuint	gles3_link_program( const char *vs_src, const char *vs_defines, const cha
 // as before this module existed - never a fatal error
 void		gles3_fbo_create( uint32_t width, uint32_t height );
 void		gles3_fbo_destroy( void );
-// gles3_fbo_create() if width/height actually changed, qtrue if it did
-// (stage 2 callers don't need this yet - vk.renderWidth/Height are static
-// for the process lifetime here - but the resize hook stage 3 needs to call
-// on a real window resize is built now per fbo_module.md's "закладывайся")
+// gles3_fbo_create() if width/height actually changed, qtrue if it did.
+// Called by gles3_fbo_handle_resize() below on a real buffer resize; a no-op
+// on pure rotation (fbo_module.md: buffer size never changes on rotation).
 qboolean	gles3_fbo_resize( uint32_t width, uint32_t height );
+// Port stage 3: full handler for a REAL window/buffer resize (never called
+// on rotation - see gles3_fbo_set_rotation for that path). Updates the
+// engine's own output dimensions (glConfig.vidWidth/Height, vk.renderWidth/
+// Height, gls.window/captureWidth/Height) and rebuilds vk.fbo at the new
+// size - a cheap, single-frame operation, no vid_restart / asset reload.
+// Triggered from shared/sdl/sdl_input.cpp via the "gles3_resize <w> <h>"
+// console command (sdl_input.cpp cannot call into the renderer directly -
+// it is compiled into the client executable, the renderer is a separate
+// dynamically loaded module, see tr_init.cpp's commands[] table). A no-op
+// if width/height are 0 or already match the current size.
+void		gles3_fbo_handle_resize( uint32_t width, uint32_t height );
 // called once at startup to build the blit shader/program (persists across
 // gles3_fbo_create/destroy calls, which only touch the FBO's own GL objects)
 void		gles3_fbo_init_program( void );
