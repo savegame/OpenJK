@@ -464,6 +464,17 @@ void gles3_fbo_get_size( uint32_t *width, uint32_t *height )
 void gles3_fbo_set_scale( float scale )
 {
 	vk.fbo.scale = ( scale > 0.0f ) ? scale : 1.0f;
+
+#ifdef AURORA
+	// Port stage 4 (shared/sdl/sdl_input.cpp, Aurora_TransformInputDeltaF):
+	// mirror the value into a cvar so the input coordinate transform - a
+	// separate dynamically loaded module, no direct call available in
+	// either direction, same reason "cl_auroraInitTransform" carries the
+	// opposite-direction value - can divide native pixel deltas by the same
+	// factor the blit actually displays the FBO at. A no-op today: nothing
+	// yet calls this with anything but the default 1.0.
+	ri.Cvar_SetValue( "cl_auroraFboScale", vk.fbo.scale );
+#endif
 }
 
 float gles3_fbo_get_scale( void )

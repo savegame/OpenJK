@@ -140,6 +140,17 @@ static int Aurora_TransformForOrientation( SDL_DisplayOrientation orientation )
 	return aurora_bufferTransformByOrientation[orientation];
 }
 
+// Port stage 4: live cache of the transform last handed to the compositor/
+// renderer by Aurora_ApplyOrientation below (and seeded at startup by
+// Aurora_RotationInit) - the input coordinate transform
+// (Aurora_TransformInputDeltaF further down) needs the SAME value to invert,
+// and since this module resolved it in the first place (Aurora_
+// TransformForOrientation) there is no need to ask the renderer for it back
+// (it is a separate dynamically loaded module - see the comment on
+// Aurora_ApplyOrientation just below for why that round trip is avoided for
+// the opposite direction too).
+static int aurora_inputTransform = WL_OUTPUT_TRANSFORM_NORMAL;
+
 // Applies one orientation change: resolves the buffer transform via
 // Aurora_TransformForOrientation, tells the compositor via
 // wl_surface_set_buffer_transform, and forwards the very same enum value to
@@ -157,6 +168,12 @@ static int Aurora_TransformForOrientation( SDL_DisplayOrientation orientation )
 static qboolean Aurora_ApplyOrientation( SDL_DisplayOrientation orientation )
 {
 	int transform = Aurora_TransformForOrientation( orientation );
+
+	// Port stage 4: kept live for Aurora_TransformInputDeltaF regardless of
+	// whether the Wayland side below actually reaches a surface this call -
+	// the console command is queued either way (EXEC_APPEND, never dropped),
+	// so the renderer's notion of the rotation and this cache never diverge.
+	aurora_inputTransform = transform;
 	qboolean delivered = qfalse;
 	SDL_SysWMinfo wmInfo;
 
@@ -227,9 +244,198 @@ static void Aurora_RotationInit( void )
 	Aurora_DeterminePanelType();
 
 	display = SDL_GetWindowDisplayIndex( SDL_window );
-	Cvar_SetValue( "cl_auroraInitTransform",
-		Aurora_TransformForOrientation( display >= 0 ? SDL_GetDisplayOrientation( display ) : SDL_ORIENTATION_UNKNOWN ) );
+	{
+		int transform = Aurora_TransformForOrientation(
+			display >= 0 ? SDL_GetDisplayOrientation( display ) : SDL_ORIENTATION_UNKNOWN );
+		// Port stage 4: seed the input-transform cache with the exact same
+		// value handed to the renderer below, so a mouse/touch event arriving
+		// before the first live Aurora_ApplyOrientation() (see the retry loop
+		// in IN_ProcessEvents) is still transformed against the real startup
+		// orientation instead of an untouched WL_OUTPUT_TRANSFORM_NORMAL.
+		aurora_inputTransform = transform;
+		Cvar_SetValue( "cl_auroraInitTransform", transform );
+	}
 }
+
+/*
+===============================================================================
+Port stage 4: input coordinate transform (gameport/AGENTS.MD, "Этап 4.
+Трансформация ввода"; gameport/docs/fbo_module.md).
+
+The compositor delivers mouse/touch coordinates in NATIVE display space -
+content rotation never touches them ("Композитор буфер не поворачивает.
+Реакция - на стороне клиента."). The engine only ever understands its own
+FBO-local pixel space (glConfig.vidWidth/vidHeight), so every such coordinate
+has to be run through the INVERSE of the rotation applied to the display quad
+(gles3_fbo.cpp's u_Rotation) before it reaches Sys_QueEvent() - exactly once,
+right here, rather than in every consumer (UI cursor, gameplay view angles).
+
+Only DELTAS are transformed (SDL_MOUSEMOTION's xrel/yrel below, and the
+synthesized touch-trackpad deltas further down) - this port never forwards an
+absolute pointer position into the engine at all; the existing
+SDL_MOUSEMOTION handler already only ever used e.motion.xrel/yrel, well
+before this stage. A delta is a pure vector: the rotation matrix's inverse
+applies to it directly, with no bias/letterbox term to worry about (moot
+here regardless - this port's blit quad always fills the entire window,
+fbo_module.md's "Леттербокс-математика не нужна").
+
+Derivation (matches gles3_fbo.cpp's vertex shader exactly):
+gl_Position (final on-screen NDC, y-up, standard GL convention) =
+u_Rotation * kPos, where kPos is the FBO's own logical NDC position - the
+same y-up convention the engine's 2D/3D pass already renders the FBO's
+content in (verified un-flipped by the accepted G2b screenshots, and by
+gles3_fbo.cpp's own rotation-matrix comment: "this port has no hidden extra
+flip"). A window-pixel delta (y-down, top-left origin - true for both a real
+mouse and SDL_FINGERMOTION) converts to on-screen NDC the usual way
+(dNDC.x = 2*dx/W, dNDC.y = -2*dy/H - negated because pixel-down is NDC-up),
+gets hit with u_Rotation's INVERSE (a rotation matrix's inverse is its
+transpose - for these 90-degree-step matrices that's just reading the table
+backwards, i.e. transform (4 - t) % 4), and converts back to pixels the same
+way in reverse. Because the FBO is always an EXACT transpose of the window
+at 90/270 (fbo_module.md, "Размер окна и буфера при повороте" - no letterbox,
+ever), the W/H normalization on each side cancels perfectly and the whole
+thing collapses to a pure per-axis swap/negate, independent of the actual
+window or FBO pixel size:
+
+    transform 0 (NORMAL): dbx =  dx,  dby =  dy   (identity)
+    transform 1 (90):     dbx = -dy,  dby =  dx
+    transform 2 (180):    dbx = -dx,  dby = -dy    (both axes invert - the
+                                                     one case simple enough to
+                                                     sanity-check by eye)
+    transform 3 (270):    dbx =  dy,  dby = -dx
+
+Cross-checked against the reference Aurora quake3e port's own, on-device-
+verified IN_TransformWindowDelta() (~/Projects/aurora-quake3/quake3e,
+code/sdl/sdl_input.c): identical four cases, once that port's own
+QUAD_ROTATE_OFFSET quirk is accounted for (a constant +2 (mod 4) it applies
+to compensate for a hidden 180-degree flip elsewhere in ITS blit pipeline -
+this port's rotation matrices have no such flip, gles3_fbo.cpp's own comment
+confirms it, so vk.fbo.transform/aurora_inputTransform IS the raw
+wl_output_transform already, with nothing to add).
+
+Scale: gles3_fbo_set_scale()/vk.fbo.scale (fbo_module.md's "коэффициент
+масштабирования") is always 1.0 today and applied nowhere in the blit, so it
+has no observable effect yet - but the formula below honours it regardless,
+ready for whenever a later stage actually resizes the FBO relative to the
+window. sdl_input.cpp cannot read vk.fbo.scale directly (the renderer is a
+separate dynamically loaded module - the exact reason Aurora_ApplyOrientation
+talks to it via a console command above instead of a function call);
+"cl_auroraFboScale" is the mirror-image cvar for the opposite direction
+(renderer -> input, whereas "cl_auroraInitTransform" above is input ->
+renderer) that a future scale stage should keep current via
+ri.Cvar_SetValue() every time it changes vk.fbo.scale -
+gles3_fbo_set_scale() (code/rd-gles3/gles3_fbo.cpp) already does this. A
+missing or non-positive read comes back as 1.0 (identity), which is exactly
+today's reality.
+===============================================================================
+*/
+
+static float Aurora_InputScale( void )
+{
+	float scale = Cvar_VariableValue( "cl_auroraFboScale" );
+	return ( scale > 0.0f ) ? scale : 1.0f;
+}
+
+// Float form: keeps the sub-pixel remainder a caller can carry across
+// events. The touch trackpad below needs this - on a HiDPI panel a single
+// SDL_FINGERMOTION can be well under 1 window pixel, and truncating each one
+// individually would starve a slow drag completely.
+static void Aurora_TransformInputDeltaF( float dwx, float dwy, float *dbx, float *dby )
+{
+	float scale = Aurora_InputScale();
+	float fdx = dwx / scale;
+	float fdy = dwy / scale;
+
+	switch ( aurora_inputTransform )
+	{
+		default:
+		case WL_OUTPUT_TRANSFORM_NORMAL:
+			if ( dbx ) *dbx =  fdx;
+			if ( dby ) *dby =  fdy;
+			break;
+		case WL_OUTPUT_TRANSFORM_90:
+			if ( dbx ) *dbx = -fdy;
+			if ( dby ) *dby =  fdx;
+			break;
+		case WL_OUTPUT_TRANSFORM_180:
+			if ( dbx ) *dbx = -fdx;
+			if ( dby ) *dby = -fdy;
+			break;
+		case WL_OUTPUT_TRANSFORM_270:
+			if ( dbx ) *dbx =  fdy;
+			if ( dby ) *dby = -fdx;
+			break;
+	}
+}
+
+// Int form for a real mouse's SDL_MOUSEMOTION xrel/yrel - those already
+// arrive as whole window pixels, so nothing is lost truncating once, here.
+static void Aurora_TransformInputDelta( int dwx, int dwy, int *dbx, int *dby )
+{
+	float fbx, fby;
+	Aurora_TransformInputDeltaF( (float)dwx, (float)dwy, &fbx, &fby );
+	if ( dbx ) *dbx = (int)fbx;
+	if ( dby ) *dby = (int)fby;
+}
+
+/*
+===============================================================================
+Port stage 4 (second half): touch-as-trackpad in the menu (task instruction:
+"в игровом меню тач работает как трекпад: если делаем тап... то это клик в
+меню, если же ведём палец - то перемещение курсора в меню").
+
+Dragging moves the UI cursor by the finger's OWN delta (like a laptop
+trackpad) - it never teleports the cursor to the touch point. A short tap
+(negligible total travel) clicks wherever the cursor already is instead.
+
+This is deliberately the ONLY option, not a stylistic pick: _UI_MouseEvent()
+(code/ui/ui_main.cpp) only ever accepts a relative dx/dy and accumulates it
+into its own uiInfo.uiDC.cursorx/y, clamped to the 640x480 virtual UI canvas
+(SCREEN_WIDTH/SCREEN_HEIGHT, code/qcommon/q_shared.h) - there is no API to
+place the cursor at an absolute point, and the UI never reports its current
+cursor position back out either, so "teleport to the touch point" would mean
+blindly walking a shadow copy of a cursor position this module can never
+read back and would desync the moment anything else moves it (menu
+navigation via keys/gamepad, etc).
+
+Scope: the menu only (Key_GetCatcher() & KEYCATCH_UI), per the task
+boundary - gameplay touch (a virtual gamepad overlay) is a separate, later
+stage ("Тач-UI (виртуальный геймпад)" in gameport/AGENTS.MD) that this one
+must not anticipate. Outside the menu, finger events are only tracked well
+enough to keep the one-finger gesture state machine correct (see the
+SDL_FINGERUP branch in IN_ProcessEvents) - never queued as input.
+
+SDL_HINT_TOUCH_MOUSE_EVENTS is forced off in IN_Init() below so SDL never
+ALSO synthesizes SDL_MOUSEMOTION/BUTTON* out of these same finger events -
+this handler in IN_ProcessEvents is the only consumer, or every tap would
+fire twice (once synthesized by SDL, once from here).
+===============================================================================
+*/
+
+// One finger drives the cursor at a time, tracked by SDL's own per-finger
+// id - a second finger touching down while the first is still held is
+// ignored outright rather than stealing/confusing the gesture.
+typedef struct
+{
+	qboolean     active;
+	SDL_FingerID fingerId;
+	float        lastX, lastY;   // native window px, last processed point
+	float        totalDist;      // native window px, accumulated path length since down - tap vs. drag
+	float        remX, remY;     // FBO-local px, sub-pixel delta carry (see Aurora_TransformInputDeltaF)
+} aurora_touchTrackpad_t;
+
+static aurora_touchTrackpad_t aurora_touch;
+
+// Tap-vs-drag threshold, in native window px of total finger travel since
+// SDL_FINGERDOWN. A cvar rather than a hardcoded constant on purpose (task
+// instruction: "порог... подбери на устройстве и вынеси константой/
+// cvar'ом, чтобы можно было крутить") - this session cannot physically hold
+// or tap the device to tune it by feel, so 16 (the value the reference
+// Aurora quake3e port settled on for the same tap-vs-drag distinction on the
+// same class of hardware, see IN_TOUCH_TAP_THRESHOLD in that project's
+// code/sdl/sdl_input.c) is used as a reasoned starting default, left for the
+// user to retune on-device via this cvar rather than a rebuild.
+static cvar_t *in_touchTapMaxDist = NULL;
 #endif // AURORA
 
 #define CTRL(a) ((a)-'a'+1)
@@ -839,6 +1045,18 @@ void IN_Init( void *windowData )
 
 #ifdef AURORA
 	Aurora_RotationInit();
+
+	// Port stage 4 (second half): touch-as-trackpad in the menu - see the
+	// big comment block above aurora_touch's declaration. Own this hint
+	// explicitly: SDL_FINGERDOWN/MOTION/UP are handled directly in
+	// IN_ProcessEvents below, so SDL's own touch->mouse synthesis must stay
+	// off or every tap would fire twice (once synthesized by SDL as a fake
+	// SDL_MOUSEBUTTONDOWN/UP, once from our own finger handling).
+	SDL_SetHint( SDL_HINT_TOUCH_MOUSE_EVENTS, "0" );
+	Com_Memset( &aurora_touch, 0, sizeof( aurora_touch ) );
+
+	in_touchTapMaxDist = Cvar_Get( "in_touchTapMaxDist", "16", CVAR_ARCHIVE_ND );
+	Cvar_CheckRange( in_touchTapMaxDist, 1.0f, 500.0f, qfalse );
 #endif
 
 	Com_DPrintf( "------------------------------------\n" );
@@ -1113,9 +1331,30 @@ static void IN_ProcessEvents( void )
 			case SDL_MOUSEMOTION:
 				if ( mouseActive )
 				{
-					if ( !e.motion.xrel && !e.motion.yrel )
+					int dx = e.motion.xrel;
+					int dy = e.motion.yrel;
+
+					if ( !dx && !dy )
 						break;
-					Sys_QueEvent( 0, SE_MOUSE, e.motion.xrel, e.motion.yrel, 0, NULL );
+#ifdef AURORA
+					// Port stage 4: the compositor hands mice motion in
+					// native display axes, unaffected by the FBO's rotation
+					// (fbo_module.md) - undo that rotation (and any display
+					// scale) here, once, before the engine ever sees it. A
+					// no-op at WL_OUTPUT_TRANSFORM_NORMAL/scale 1.0, which is
+					// what a desktop host build sits at permanently (no
+					// SDL_DISPLAYEVENT_ORIENTATION ever fires there), so this
+					// cannot regress host mouse behaviour.
+					{
+						int tdx, tdy;
+						Aurora_TransformInputDelta( dx, dy, &tdx, &tdy );
+						dx = tdx;
+						dy = tdy;
+					}
+					if ( !dx && !dy )
+						break;
+#endif
+					Sys_QueEvent( 0, SE_MOUSE, dx, dy, 0, NULL );
 				}
 				break;
 
@@ -1149,6 +1388,101 @@ static void IN_ProcessEvents( void )
 					Sys_QueEvent( 0, SE_KEY, A_MWHEELDOWN, qfalse, 0, NULL );
 				}
 				break;
+
+#ifdef AURORA
+			// Port stage 4 (second half): touch-as-trackpad in the menu -
+			// see the big comment block above aurora_touch's declaration for
+			// the design (relative drag, tap-clicks-in-place, menu-only
+			// scope). SDL_HINT_TOUCH_MOUSE_EVENTS is off (IN_Init above), so
+			// this is the only path SDL_FINGER* ever takes.
+			case SDL_FINGERDOWN:
+			case SDL_FINGERMOTION:
+			case SDL_FINGERUP:
+			{
+				int windowW, windowH;
+				float px, py;
+
+				if ( !( Key_GetCatcher() & KEYCATCH_UI ) )
+				{
+					// Not the menu - gameplay touch is a separate, later
+					// stage (the virtual gamepad). Still clear an in-flight
+					// gesture on release so closing the menu mid-drag can't
+					// leave aurora_touch.active stuck true and lock out the
+					// next SDL_FINGERDOWN forever.
+					if ( e.type == SDL_FINGERUP && aurora_touch.active
+						&& aurora_touch.fingerId == e.tfinger.fingerId )
+					{
+						aurora_touch.active = qfalse;
+					}
+					break;
+				}
+
+				SDL_GetWindowSize( SDL_window, &windowW, &windowH );
+				if ( windowW <= 0 ) windowW = 1;
+				if ( windowH <= 0 ) windowH = 1;
+				// SDL_TouchFingerEvent's x/y are normalized [0,1] over the
+				// WINDOW (native display axes, same space SDL_MOUSEMOTION's
+				// xrel/yrel above live in) - never the FBO/output size.
+				px = e.tfinger.x * (float)windowW;
+				py = e.tfinger.y * (float)windowH;
+
+				if ( e.type == SDL_FINGERDOWN )
+				{
+					if ( aurora_touch.active )
+						break; // one finger drives the cursor at a time
+
+					aurora_touch.active = qtrue;
+					aurora_touch.fingerId = e.tfinger.fingerId;
+					aurora_touch.lastX = px;
+					aurora_touch.lastY = py;
+					aurora_touch.totalDist = 0.0f;
+					aurora_touch.remX = aurora_touch.remY = 0.0f;
+				}
+				else if ( aurora_touch.active && aurora_touch.fingerId == e.tfinger.fingerId )
+				{
+					if ( e.type == SDL_FINGERMOTION )
+					{
+						float ddx = px - aurora_touch.lastX;
+						float ddy = py - aurora_touch.lastY;
+						float fbx, fby;
+						int dbx, dby;
+
+						aurora_touch.totalDist += sqrtf( ddx * ddx + ddy * ddy );
+						aurora_touch.lastX = px;
+						aurora_touch.lastY = py;
+
+						// Trackpad: move by the finger's OWN delta (never
+						// teleport to px,py), through the same rotation/scale
+						// transform as a real mouse - float variant so the
+						// sub-pixel remainder survives across events.
+						Aurora_TransformInputDeltaF( ddx, ddy, &fbx, &fby );
+						aurora_touch.remX += fbx;
+						aurora_touch.remY += fby;
+						dbx = (int)aurora_touch.remX;
+						dby = (int)aurora_touch.remY;
+						aurora_touch.remX -= (float)dbx;
+						aurora_touch.remY -= (float)dby;
+						if ( dbx || dby )
+							Sys_QueEvent( 0, SE_MOUSE, dbx, dby, 0, NULL );
+					}
+					else // SDL_FINGERUP
+					{
+						float tapMaxDist = in_touchTapMaxDist ? in_touchTapMaxDist->value : 16.0f;
+
+						// Tap (negligible total movement since FINGERDOWN):
+						// click wherever the cursor already is. A real drag
+						// does NOT also click on release.
+						if ( aurora_touch.totalDist < tapMaxDist )
+						{
+							Sys_QueEvent( 0, SE_KEY, A_MOUSE1, qtrue, 0, NULL );
+							Sys_QueEvent( 0, SE_KEY, A_MOUSE1, qfalse, 0, NULL );
+						}
+						aurora_touch.active = qfalse;
+					}
+				}
+				break;
+			}
+#endif
 
 			case SDL_QUIT:
 				Cbuf_ExecuteText(EXEC_NOW, "quit Closed window\n");
