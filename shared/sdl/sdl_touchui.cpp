@@ -110,7 +110,7 @@ static touchButton_t touchButtons[TB_COUNT] = {
 	{ "+attack\n",    "-attack\n",     AURORA_TOUCH_ICON_FIRE,    0 },
 	{ "+altattack\n", "-altattack\n",  AURORA_TOUCH_ICON_ALTFIRE, 0 },
 	{ "+moveup\n",    "-moveup\n",     AURORA_TOUCH_ICON_JUMP,    0 },
-	{ "+movedown\n",  "-movedown\n",   AURORA_TOUCH_ICON_CROUCH,  1 },
+	{ "+movedown\n",  "-movedown\n",   AURORA_TOUCH_ICON_CROUCH,  0 },
 	{ "+use\n",       "-use\n",        AURORA_TOUCH_ICON_USE,     0 },
 };
 
@@ -327,20 +327,20 @@ static void Aurora_TouchUI_Layout( void )
 	// reference's "large primary action, flanked by smaller utility
 	// buttons, thumb never has to leave the corner" shape.
 	touchButtons[TB_FIRE].radiusMm = bigMm * 0.5f;
-	touchButtons[TB_FIRE].cx = right - bigMm * 0.5f;
-	touchButtons[TB_FIRE].cy = bottom - bigMm * 0.5f;
+	touchButtons[TB_FIRE].cx = right - bigMm * 2.5f;
+	touchButtons[TB_FIRE].cy = bottom - bigMm * 2.5f;
 
 	touchButtons[TB_JUMP].radiusMm = smallMm * 0.5f;
-	touchButtons[TB_JUMP].cx = touchButtons[TB_FIRE].cx;
-	touchButtons[TB_JUMP].cy = touchButtons[TB_FIRE].cy - bigMm * 0.5f - gapMm - smallMm * 0.5f;
+	touchButtons[TB_JUMP].cx = right - smallMm * 0.5f;
+	touchButtons[TB_JUMP].cy = bottom - smallMm * 3.5f;
 
 	touchButtons[TB_CROUCH].radiusMm = smallMm * 0.5f;
-	touchButtons[TB_CROUCH].cx = touchButtons[TB_FIRE].cx - bigMm * 0.5f - gapMm - smallMm * 0.5f;
-	touchButtons[TB_CROUCH].cy = touchButtons[TB_FIRE].cy;
+	touchButtons[TB_CROUCH].cx = right - bigMm * 2.2f- smallMm -gapMm;
+	touchButtons[TB_CROUCH].cy = touchButtons[TB_FIRE].cy - smallMm - gapMm;
 
 	touchButtons[TB_ALTFIRE].radiusMm = smallMm * 0.5f;
-	touchButtons[TB_ALTFIRE].cx = touchButtons[TB_CROUCH].cx;
-	touchButtons[TB_ALTFIRE].cy = touchButtons[TB_JUMP].cy;
+	touchButtons[TB_ALTFIRE].cx = right - bigMm * 2.2f;
+	touchButtons[TB_ALTFIRE].cy = touchButtons[TB_FIRE].cy - smallMm - gapMm ;
 
 	touchButtons[TB_USE].radiusMm = smallMm * 0.5f;
 	touchButtons[TB_USE].cx = touchButtons[TB_CROUCH].cx - smallMm - gapMm;
