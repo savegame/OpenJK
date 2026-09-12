@@ -31,6 +31,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "qcommon/MiniHeap.h"
 #include "ghoul2/G2.h"
 #include "tr_cache.h"
+#ifdef AURORA
+#include "gles3_touchui.h"
+#endif
 
 glconfig_t	glConfig;
 glconfigExt_t glConfigExt;
@@ -1176,6 +1179,12 @@ void RE_Shutdown( qboolean destroyWindow, qboolean restarting ) {
 	//vk_release_resources(); not merged yet (https://github.com/ec-/Quake3e/commit/d31b84ebf2ab702686e98dff40b7673473026b30)
 
 	if (destroyWindow) {
+#ifdef AURORA
+		// Port stage "Тач-UI": free the private ImGui context/GL objects
+		// (gles3_touchui.cpp) while the GL context is still alive - after
+		// vk_shutdown() below there is nothing left for glDelete* to target.
+		Aurora_TouchUI_Shutdown();
+#endif
 		vk_shutdown();
 
 		Com_Memset(&glState, 0, sizeof(glState));
@@ -1526,6 +1535,12 @@ Q_EXPORT refexport_t* QDECL GetRefAPI( int apiVersion, refimport_t *rimp ) {
 #ifdef G2_PERFORMANCE_ANALYSIS
 	re.G2Time_ReportTimers = G2Time_ReportTimers;
 	re.G2Time_ResetTimers = G2Time_ResetTimers;
+#endif
+
+#ifdef AURORA
+	// Port stage "Тач-UI" - see the comment on Aurora_SetTouchOverlay in
+	// tr_public.h for why leaving this NULL on other renderers is safe.
+	re.Aurora_SetTouchOverlay = Aurora_TouchUI_SetOverlay;
 #endif
 
 	return &re;

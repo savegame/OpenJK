@@ -28,6 +28,10 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../qcommon/qcommon.h"
 
 #include "../ghoul2/G2.h"
+
+#ifdef AURORA
+#include "tr_touchui.h"
+#endif
 #include "../ghoul2/ghoul2_gore.h"
 
 #define	REF_API_VERSION		18
@@ -380,6 +384,20 @@ typedef struct {
 	// Performance analysis (perform anal)
 	void		(*G2Time_ResetTimers)(void);
 	void		(*G2Time_ReportTimers)(void);
+
+#ifdef AURORA
+	// Port stage "Тач-UI (виртуальный геймпад)" (gameport/docs/touch_ui.md):
+	// the client (shared/sdl/sdl_touchui.cpp) calls this once a frame with
+	// the current overlay layout (tr_touchui.h) - NULL or an overlay with
+	// numButtons==0 and stick==0 means "draw nothing". Only rd-gles3
+	// implements it (code/rd-gles3/gles3_touchui.cpp); rd-vanilla/rd-vulkan
+	// leave the pointer NULL because every renderer's GetRefAPI starts with
+	// memset(&re, 0, sizeof(re)) before assigning fields (see
+	// code/rd-gles3/tr_init.cpp) - the client guards every call with
+	// `if (re.Aurora_SetTouchOverlay)`, so a renderer without an
+	// implementation is silently a no-op, never a null-pointer call.
+	void		(*Aurora_SetTouchOverlay)(const auroraTouchOverlay_t *overlay);
+#endif
 } refexport_t;
 
 // this is the only function actually exported at the linker level

@@ -30,6 +30,9 @@ along with OpenJK; if not, see <http://www.gnu.org/licenses/>.
 
 #include "tr_local.h"
 #include "gles3_local.h"
+#ifdef AURORA
+#include "gles3_touchui.h"
+#endif
 
 // (Matrix16Identity/Matrix16Copy/myGlMultMatrix are provided by tr_main.cpp)
 
@@ -464,6 +467,19 @@ void vk_present_frame( void )
 	gles3_fbo_invalidate_depth_stencil();
 	glBindFramebuffer( GL_FRAMEBUFFER, 0 );
 	gles3_fbo_blit_to_screen();
+
+#ifdef AURORA
+	// Port stage "Тач-UI" (research/touch_ui_research.md, п.5): drawn here,
+	// after the game's own frame has been blitted to the real window and
+	// before the swap - default framebuffer is already bound, viewport
+	// already covers the whole window (gles3_fbo_blit_to_screen() above),
+	// nothing below this line reads GL state again this frame (WIN_Present
+	// is just eglSwapBuffers), and the next frame's vk_begin_frame()
+	// unconditionally calls gles3_state_cache_invalidate() before its first
+	// draw - so, exactly like the blit quad above it, this can freely use
+	// raw GL (via ImGui's own backend) without restoring anything by hand.
+	Aurora_TouchUI_Draw();
+#endif
 
 	// EGL_SWAP_BEHAVIOR is left at the driver default (EGL_BUFFER_DESTROYED,
 	// tile-friendly - no reload of the previous frame's backbuffer). It used

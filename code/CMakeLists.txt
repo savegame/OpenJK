@@ -369,6 +369,11 @@ if(BuildSPEngine OR BuildJK2SPEngine)
 		"${SharedDir}/sdl/sdl_input.cpp"
 		"${SharedDir}/sdl/sdl_window.cpp"
 		"${SharedDir}/sdl/sdl_icon.h"
+		# Port stage "Тач-UI (виртуальный геймпад)" - layout/hit-test/action
+		# dispatch only, a module of its own (gameport/docs/touch_ui.md);
+		# drawing lives in code/rd-gles3/gles3_touchui*.cpp.
+		"${SharedDir}/sdl/sdl_touchui.h"
+		"${SharedDir}/sdl/sdl_touchui.cpp"
 		)
 
 	if(WIN32)

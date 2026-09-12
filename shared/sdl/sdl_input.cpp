@@ -32,6 +32,10 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // SDL_GetWindowWMInfo) is used directly.
 #include <SDL_syswm.h>
 #include <wayland-client.h>
+
+// Port stage "Тач-UI (виртуальный геймпад)" - the gameplay overlay module,
+// a separate translation unit; see sdl_touchui.h for the split.
+#include "sdl_touchui.h"
 #endif
 
 static cvar_t *in_keyboardDebug     = NULL;
@@ -150,6 +154,19 @@ static int Aurora_TransformForOrientation( SDL_DisplayOrientation orientation )
 // Aurora_ApplyOrientation just below for why that round trip is avoided for
 // the opposite direction too).
 static int aurora_inputTransform = WL_OUTPUT_TRANSFORM_NORMAL;
+
+// Port stage "Тач-UI": the two small accessors sdl_touchui.cpp (a separate
+// translation unit in this same client binary - no dlopen boundary, unlike
+// the renderer) needs back from this file. Declared in sdl_touchui.h.
+int Aurora_TouchUI_GetTransform( void )
+{
+	return aurora_inputTransform;
+}
+
+struct SDL_Window *Aurora_TouchUI_GetWindow( void )
+{
+	return SDL_window;
+}
 
 // Applies one orientation change: resolves the buffer transform via
 // Aurora_TransformForOrientation, tells the compositor via
@@ -1057,6 +1074,21 @@ void IN_Init( void *windowData )
 
 	in_touchTapMaxDist = Cvar_Get( "in_touchTapMaxDist", "16", CVAR_ARCHIVE_ND );
 	Cvar_CheckRange( in_touchTapMaxDist, 1.0f, 500.0f, qfalse );
+
+	// Port stage "Тач-UI": IN_InitJoystick() above may have just called
+	// SDL_QuitSubSystem(SDL_INIT_JOYSTICK) (its own early-out when
+	// in_joystick is 0, the default - CVAR_LATCH, so it never reconsiders
+	// until a vid_restart). Re-init it here regardless, purely so
+	// SDL_JOYDEVICEADDED/REMOVED keep arriving for the touch-ui's
+	// physical-input-displaces-touch-ui rule (gameport/docs/touch_ui.md) -
+	// this never touches `stick`/in_joystick or feeds the joystick into
+	// usercmd generation, only lets the device-list events through.
+	if ( !SDL_WasInit( SDL_INIT_JOYSTICK ) )
+	{
+		SDL_InitSubSystem( SDL_INIT_JOYSTICK );
+	}
+
+	Aurora_TouchUI_Init();
 #endif
 
 	Com_DPrintf( "------------------------------------\n" );
@@ -1282,6 +1314,13 @@ static void IN_ProcessEvents( void )
 		switch( e.type )
 		{
 			case SDL_KEYDOWN:
+#ifdef AURORA
+				// Port stage "Тач-UI": a real key (Maliit's virtual keyboard
+				// never reaches here as SDL_KEYDOWN, only SDL_TEXTINPUT/its
+				// own IME path) means the player has physical input - hide
+				// the overlay until the next touch.
+				Aurora_TouchUI_NotePhysicalInput();
+#endif
 				key = IN_TranslateSDLToJKKey( &e.key.keysym, qtrue );
 				if ( key != A_NULL )
 					Sys_QueEvent( 0, SE_KEY, key, qtrue, 0, NULL );
@@ -1329,6 +1368,12 @@ static void IN_ProcessEvents( void )
 				break;
 
 			case SDL_MOUSEMOTION:
+#ifdef AURORA
+				// Port stage "Тач-UI": SDL_HINT_TOUCH_MOUSE_EVENTS is off
+				// (IN_Init), so any SDL_MOUSEMOTION reaching here is a real
+				// mouse, never synthesized from a finger.
+				Aurora_TouchUI_NotePhysicalInput();
+#endif
 				if ( mouseActive )
 				{
 					int dx = e.motion.xrel;
@@ -1404,16 +1449,20 @@ static void IN_ProcessEvents( void )
 
 				if ( !( Key_GetCatcher() & KEYCATCH_UI ) )
 				{
-					// Not the menu - gameplay touch is a separate, later
-					// stage (the virtual gamepad). Still clear an in-flight
-					// gesture on release so closing the menu mid-drag can't
-					// leave aurora_touch.active stuck true and lock out the
-					// next SDL_FINGERDOWN forever.
+					// Not the menu - gameplay touch is the virtual gamepad
+					// overlay (port stage "Тач-UI"), a separate module with
+					// its own per-fingerId state; it never touches
+					// aurora_touch (the menu trackpad above). Still clear an
+					// in-flight menu-trackpad gesture on release so closing
+					// the menu mid-drag can't leave aurora_touch.active
+					// stuck true and lock out the next SDL_FINGERDOWN
+					// forever.
 					if ( e.type == SDL_FINGERUP && aurora_touch.active
 						&& aurora_touch.fingerId == e.tfinger.fingerId )
 					{
 						aurora_touch.active = qfalse;
 					}
+					Aurora_TouchUI_FingerEvent( &e );
 					break;
 				}
 
@@ -1482,6 +1531,17 @@ static void IN_ProcessEvents( void )
 				}
 				break;
 			}
+
+			// Port stage "Тач-UI": a gamepad connecting/disconnecting -
+			// re-evaluate whether the overlay should stay hidden/shown.
+			// SDL_JOYDEVICEADDED also fires for devices already plugged in
+			// at startup, once the joystick subsystem is up (IN_Init's
+			// SDL_InitSubSystem(SDL_INIT_JOYSTICK) above) - so a controller
+			// present before launch is caught too, not just later hot-plugs.
+			case SDL_JOYDEVICEADDED:
+			case SDL_JOYDEVICEREMOVED:
+				Aurora_TouchUI_NoteJoystickChange();
+				break;
 #endif
 
 			case SDL_QUIT:
@@ -1819,6 +1879,13 @@ void IN_Frame (void) {
 		IN_ActivateMouse( );
 
 	IN_ProcessEvents( );
+
+#ifdef AURORA
+	// Port stage "Тач-UI": refresh layout, apply the physical-input rule and
+	// ship the current overlay to the renderer - after IN_ProcessEvents so
+	// this frame's finger/mouse/key events are already accounted for.
+	Aurora_TouchUI_Frame();
+#endif
 }
 
 /*
@@ -1847,6 +1914,10 @@ void IN_Shutdown( void ) {
 	mouseAvailable = qfalse;
 
 	IN_ShutdownJoystick( );
+
+#ifdef AURORA
+	Aurora_TouchUI_Shutdown();
+#endif
 
 	SDL_window = NULL;
 }
