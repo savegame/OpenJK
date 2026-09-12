@@ -710,9 +710,46 @@ void Aurora_TouchUI_NotePhysicalInput( void )
 	touchPhysicalOverride = 1;
 }
 
+/*
+=================
+Aurora_TouchUI_RealJoystickConnected
+
+This device's own udev data tags the on-board "mtk-kpd" keypad node
+(physical volume buttons) as ID_INPUT_JOYSTICK, and SDL - which
+discovers joysticks through udev - reports that keypad as a joystick
+for as long as it exists. With the naive "any joystick hides the
+overlay" rule the auto-mode overlay would stay hidden forever:
+SDL_NumJoysticks() is 1 from boot, no gamepad involved.
+
+A real gamepad reaches a phone over USB or Bluetooth; the phantom
+internal "joysticks" (on-board key pads, and - via SDL's evdev class
+guesser, src/core/linux/SDL_evdev_capabilities.c - touch panels that
+report a stray gamepad-range key) are internal bus nodes. SDL puts the
+evdev bus type into the first two (LE) bytes of the joystick GUID, so
+that is what we key on: only USB/Bluetooth joysticks count as a
+physical gamepad.
+=================
+*/
+static int Aurora_TouchUI_RealJoystickConnected( void )
+{
+	int i;
+
+	for ( i = 0; i < SDL_NumJoysticks(); i++ )
+	{
+		const SDL_JoystickGUID guid = SDL_JoystickGetDeviceGUID( i );
+		const unsigned int bus = guid.data[0] | ( (unsigned int)guid.data[1] << 8 );
+
+		if ( bus == 0x03 /* BUS_USB */ || bus == 0x05 /* BUS_BLUETOOTH */ )
+		{
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
 void Aurora_TouchUI_NoteJoystickChange( void )
 {
-	touchJoystickConnected = ( SDL_NumJoysticks() > 0 );
+	touchJoystickConnected = Aurora_TouchUI_RealJoystickConnected();
 	if ( touchJoystickConnected )
 	{
 		touchPhysicalOverride = 1;
@@ -827,7 +864,7 @@ void Aurora_TouchUI_Init( void )
 
 	// A gamepad may already be connected at launch - IN_Init calls this
 	// after making sure SDL_INIT_JOYSTICK is up (see the caller).
-	touchJoystickConnected = ( SDL_NumJoysticks() > 0 );
+	touchJoystickConnected = Aurora_TouchUI_RealJoystickConnected();
 }
 
 void Aurora_TouchUI_Shutdown( void )
