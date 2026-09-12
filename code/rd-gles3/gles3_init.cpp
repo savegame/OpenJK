@@ -27,7 +27,6 @@ along with OpenJK; if not, see <http://www.gnu.org/licenses/>.
 #include "tr_local.h"
 #include "gles3_local.h"
 #include "../rd-common/tr_common.h"
-#include <EGL/egl.h>
 
 void vk_set_clearcolor( void ) {
 	vec4_t clr;
@@ -167,17 +166,20 @@ void vk_initialize( void )
 	ri.Printf( PRINT_ALL, "GL_RENDERER: %s\n", vk.renderer_string );
 	ri.Printf( PRINT_ALL, "GL_VERSION: %s\n", vk.version_string );
 
-	// Keep the backbuffer after swap so screenshot/video readback
-	// (vk_read_pixels after WIN_Present) sees the presented frame.
-	{
-		EGLDisplay egl_dpy = eglGetCurrentDisplay();
-		EGLSurface egl_surf = eglGetCurrentSurface( EGL_DRAW );
-		if ( egl_dpy != EGL_NO_DISPLAY && egl_surf != EGL_NO_SURFACE ) {
-			if ( eglSurfaceAttrib( egl_dpy, egl_surf, EGL_SWAP_BEHAVIOR, EGL_BUFFER_PRESERVED ) ) {
-				ri.Printf( PRINT_ALL, "...using EGL_BUFFER_PRESERVED backbuffer\n" );
-			}
-		}
-	}
+	// EGL_SWAP_BEHAVIOR is intentionally left at its default (EGL_BUFFER_DESTROYED)
+	// here. It used to be forced to EGL_BUFFER_PRESERVED unconditionally, on the
+	// theory that screenshot/video readback (vk_read_pixels) needed to see the
+	// *presented* (post-swap) frame. EGL_BUFFER_PRESERVED is a known performance
+	// trap on tile-based mobile GPUs: it forces the driver to load the previous
+	// frame's backbuffer contents into tile memory before rendering starts,
+	// instead of letting the frame begin from a clean tile (the whole point of
+	// tile-based rendering) - paid on every single frame.
+	// Checked against the actual call order in RB_SwapBuffers (tr_backend.cpp):
+	// the readback runs, and backEnd.screenshotMask is cleared, *before*
+	// vk_present_frame()'s WIN_Present (the actual eglSwapBuffers) - so
+	// RB_ReadPixels always reads the still-current, not-yet-swapped backbuffer
+	// of the frame that was just rendered. EGL_BUFFER_PRESERVED never affected
+	// what a screenshot captured here; removing it is a pure win.
 
 	glConfig.deviceSupportsGamma = qfalse;
 	glConfig.doStencilShadowsInOneDrawcall = qtrue; // glStencilOpSeparate is ES3 core

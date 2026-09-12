@@ -443,6 +443,18 @@ void vk_end_frame( void )
 
 void vk_present_frame( void )
 {
+	// EGL_SWAP_BEHAVIOR is left at the driver default (EGL_BUFFER_DESTROYED,
+	// tile-friendly - no reload of the previous frame's backbuffer). It used
+	// to be forced to EGL_BUFFER_PRESERVED at init unconditionally, on the
+	// theory that screenshot/video readback needed to see the *presented*
+	// (post-swap) frame. Checked against the actual call order in
+	// RB_SwapBuffers (tr_backend.cpp): the readback (R_TakeScreenshot*/
+	// RB_TakeVideoFrameCmd, gated on backEnd.screenshotMask) runs, and
+	// backEnd.screenshotMask is cleared, *before* vk_present_frame() (i.e.
+	// before WIN_Present's eglSwapBuffers) - so RB_ReadPixels always reads
+	// the still-current, not-yet-swapped backbuffer of the frame that was
+	// just rendered. EGL_BUFFER_PRESERVED never affected what a screenshot
+	// captured here; it only paid a tile-reload cost on every single swap.
 	ri.WIN_Present( &window );
 	// the presented frame completed on the CPU side (glFinish semantics of
 	// the swap): backend is idle, screenshot/video readback may run
