@@ -936,6 +936,32 @@ static void IN_ProcessEvents( void )
 						SNDDMA_Activate( qtrue );
 						break;
 					}
+
+#ifdef AURORA
+					case SDL_WINDOWEVENT_SIZE_CHANGED:
+					{
+						// A REAL buffer resize (moved to another display, or
+						// the compositor correcting the fullscreen size after
+						// the window was created) - never fired on a pure
+						// device rotation, which only ever changes the
+						// orientation event (gameport/docs/fbo_module.md,
+						// "Размер окна и буфера при повороте"). vid_restart
+						// re-runs the whole renderer init cascade, which
+						// re-queries the window size (GLimp_SetMode, above)
+						// and rebuilds the offscreen FBO at the new size
+						// (rd-gles3: vk_initialize -> gles3_fbo_resize) -
+						// this is the "resize handler" fbo_module.md asks to
+						// be called manually on a real size change.
+						int newW = e.window.data1;
+						int newH = e.window.data2;
+
+						if ( newW > 0 && newH > 0 && ( newW != cls.glconfig.vidWidth || newH != cls.glconfig.vidHeight ) )
+						{
+							Cbuf_ExecuteText( EXEC_APPEND, "vid_restart\n" );
+						}
+						break;
+					}
+#endif
 				}
 				break;
 

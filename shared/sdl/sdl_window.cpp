@@ -383,6 +383,40 @@ static rserr_t GLimp_SetMode(glconfig_t *glConfig, const windowDesc_t *windowDes
 
 	Com_Printf( "...setting mode %d:", mode );
 
+#ifdef AURORA
+	if ( fullscreen )
+	{
+		SDL_Rect usable;
+
+		// Fullscreen always uses the compositor's real usable area, ignoring
+		// r_mode's fixed resolution table entirely: on a portrait panel that
+		// area is already adjusted for the compositor's output transform
+		// (the actual size a fullscreen surface should request), whereas
+		// SDL_GetDesktopDisplayMode can return the panel's raw native
+		// (landscape) resolution regardless of the device's current
+		// orientation - see gameport/docs/sdl2_aurora.md, "Размер окна для
+		// лаунчера/окна приложения". SDL_GetDesktopDisplayMode stays as the
+		// fallback for a compositor that doesn't answer the usable-bounds
+		// query.
+		if ( SDL_GetDisplayUsableBounds( display, &usable ) == 0 && usable.w > 0 && usable.h > 0 )
+		{
+			glConfig->vidWidth = usable.w;
+			glConfig->vidHeight = usable.h;
+		}
+		else if ( desktopMode.h > 0 )
+		{
+			glConfig->vidWidth = desktopMode.w;
+			glConfig->vidHeight = desktopMode.h;
+		}
+		else
+		{
+			glConfig->vidWidth = 640;
+			glConfig->vidHeight = 480;
+			Com_Printf( "Cannot determine display resolution, assuming 640x480\n" );
+		}
+	}
+	else
+#endif
 	if (mode == -2)
 	{
 		// use desktop video resolution
@@ -755,7 +789,15 @@ window_t WIN_Init( const windowDesc_t *windowDesc, glconfig_t *glConfig )
 	r_allowSoftwareGL	= Cvar_Get( "r_allowSoftwareGL",	"0",		CVAR_ARCHIVE_ND|CVAR_LATCH );
 
 	// Window cvars
+#ifdef AURORA
+	// A small windowed mode makes no sense on a phone screen - default to
+	// fullscreen so a fresh install (no saved config yet) starts full-screen
+	// without extra launcher/config work. Still an ARCHIVE cvar: a user (or
+	// a later launcher) can still override and have it stick.
+	r_fullscreen		= Cvar_Get( "r_fullscreen",			"1",		CVAR_ARCHIVE|CVAR_LATCH );
+#else
 	r_fullscreen		= Cvar_Get( "r_fullscreen",			"0",		CVAR_ARCHIVE|CVAR_LATCH );
+#endif
 	r_noborder			= Cvar_Get( "r_noborder",			"0",		CVAR_ARCHIVE|CVAR_LATCH );
 	r_centerWindow		= Cvar_Get( "r_centerWindow",		"0",		CVAR_ARCHIVE|CVAR_LATCH );
 	r_customwidth		= Cvar_Get( "r_customwidth",		"1600",		CVAR_ARCHIVE|CVAR_LATCH );
