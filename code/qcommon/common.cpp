@@ -1484,6 +1484,33 @@ void Com_Frame( void ) {
 			}
 		}
 
+		// --- Aurora perf work: periodic FPS meter to stdout (~2x/sec), always on ---
+		// Independent of com_speeds so it's available on-device with just stdout
+		// captured (ssh | tee). Reports both the rolling average over the
+		// printed window and the instantaneous per-frame value.
+		{
+			static int fpsWindowStartMsec = 0;
+			static int fpsWindowFrames = 0;
+			int nowMsec = Sys_Milliseconds();
+
+			if ( fpsWindowStartMsec == 0 ) {
+				fpsWindowStartMsec = nowMsec;
+			}
+			fpsWindowFrames++;
+
+			int windowMsec = nowMsec - fpsWindowStartMsec;
+			if ( windowMsec >= 500 ) {
+				float avgFps = ( windowMsec > 0 ) ? ( fpsWindowFrames * 1000.0f / (float)windowMsec ) : 0.0f;
+				float instFps = ( msec > 0 ) ? ( 1000.0f / (float)msec ) : 0.0f;
+
+				Com_Printf( "FPSMETER avg=%.1f inst=%.1f frames=%d window_ms=%d\n",
+							avgFps, instFps, fpsWindowFrames, windowMsec );
+
+				fpsWindowStartMsec = nowMsec;
+				fpsWindowFrames = 0;
+			}
+		}
+
 
 		//
 		// report timing information
