@@ -288,6 +288,51 @@ void gles3_apply_uniforms( void )
 }
 
 // ---------------------------------------------------------------------------
+// geometry buffer upload
+// ---------------------------------------------------------------------------
+
+// Upload `size` bytes at `offset` in the currently-bound buffer of `target`.
+//
+// Called once per draw call for both the vertex (GL_ARRAY_BUFFER) and index
+// (GL_ELEMENT_ARRAY_BUFFER) streaming buffers - potentially hundreds to
+// thousands of times per frame. This used to be a plain glBufferSubData(),
+// which on tile-based mobile drivers (Mali) appears to synchronize at
+// whole-buffer granularity: even though each call only ever touches a fresh
+// range that nothing else in this frame has written or read yet (the buffer
+// is orphaned once per frame in vk_begin_frame() and the range only grows
+// within the frame), the driver still has to assume the new range might
+// alias data an already-submitted draw is reading, and inserts a GPU-side
+// sync point. Those pile up over the frame and show up as an oversized wait
+// inside the swap rather than as CPU time in the frontend/backend timers.
+//
+// glMapBufferRange() with GL_MAP_UNSYNCHRONIZED_BIT tells the driver we
+// already know there is no such hazard (true here, by construction: the
+// range is always beyond anything previously uploaded this frame).
+// GL_MAP_INVALIDATE_RANGE_BIT additionally says the old contents of the
+// range are irrelevant, which also holds since the call fully overwrites
+// it. The buffer is unmapped again before returning, since flush always
+// runs immediately before the draw call that needs the data and ES 3.0
+// does not allow drawing from a currently-mapped buffer.
+//
+// Ported from the equivalent fix in the reference GLES3 port (quake3e
+// renderergles3 gles3_flush_geometry, commit a3bf0783): measured there as a
+// ~43x improvement (3.0 fps -> ~130 fps) on a Mali tile-based GPU.
+static void gles3_upload_buffer_range( GLenum target, uint32_t offset, uint32_t size, const void *src )
+{
+	void *dst = glMapBufferRange( target, offset, size,
+		GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT | GL_MAP_INVALIDATE_RANGE_BIT );
+
+	if ( dst ) {
+		Com_Memcpy( dst, src, size );
+		glUnmapBuffer( target );
+	} else {
+		// Driver refused the map (should not normally happen) - fall back
+		// to the always-correct path rather than dropping data.
+		glBufferSubData( target, offset, size, src );
+	}
+}
+
+// ---------------------------------------------------------------------------
 // index streaming
 // ---------------------------------------------------------------------------
 
@@ -303,7 +348,7 @@ uint32_t vk_tess_index( uint32_t numIndexes, const void *src )
 	Com_Memcpy( dst, src, size );
 
 	glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, vk.index_buffer );
-	glBufferSubData( GL_ELEMENT_ARRAY_BUFFER, offset, size, dst );
+	gles3_upload_buffer_range( GL_ELEMENT_ARRAY_BUFFER, offset, size, dst );
 
 	vk.cmd->num_indexes = numIndexes;
 	vk.cmd->index_offset = offset;
@@ -349,7 +394,7 @@ void vk_bind_geometry( uint32_t flags )
 	ptr = gles3_geometry_buffer_map( &g_geom.offset[ATTR_XYZ], xyz_size );
 	if ( ptr == NULL ) return;
 	Com_Memcpy( ptr, tess.xyz, xyz_size );
-	glBufferSubData( GL_ARRAY_BUFFER, g_geom.offset[ATTR_XYZ], xyz_size, ptr );
+	gles3_upload_buffer_range( GL_ARRAY_BUFFER, g_geom.offset[ATTR_XYZ], xyz_size, ptr );
 	mask |= 1 << ATTR_XYZ;
 
 	// colors
@@ -373,7 +418,7 @@ void vk_bind_geometry( uint32_t flags )
 			g_geom.offset[ATTR_COLOR2] = off + 2 * color_size;
 			mask |= 1 << ATTR_COLOR2;
 		}
-		glBufferSubData( GL_ARRAY_BUFFER, off, 3 * color_size, ptr );
+		gles3_upload_buffer_range( GL_ARRAY_BUFFER, off, 3 * color_size, ptr );
 	}
 
 	// texcoords
@@ -397,7 +442,7 @@ void vk_bind_geometry( uint32_t flags )
 			g_geom.offset[ATTR_ST2] = off + 2 * st_size;
 			mask |= 1 << ATTR_ST2;
 		}
-		glBufferSubData( GL_ARRAY_BUFFER, off, 3 * st_size, ptr );
+		gles3_upload_buffer_range( GL_ARRAY_BUFFER, off, 3 * st_size, ptr );
 	}
 
 	// normals
@@ -405,7 +450,7 @@ void vk_bind_geometry( uint32_t flags )
 		ptr = gles3_geometry_buffer_map( &g_geom.offset[ATTR_NORMAL], nnn_size );
 		if ( ptr == NULL ) return;
 		Com_Memcpy( ptr, tess.normal, nnn_size );
-		glBufferSubData( GL_ARRAY_BUFFER, g_geom.offset[ATTR_NORMAL], nnn_size, ptr );
+		gles3_upload_buffer_range( GL_ARRAY_BUFFER, g_geom.offset[ATTR_NORMAL], nnn_size, ptr );
 		mask |= 1 << ATTR_NORMAL;
 	}
 
@@ -429,7 +474,7 @@ void vk_bind_lighting( int stage, int bundle )
 	ptr = gles3_geometry_buffer_map( &g_geom.offset[ATTR_XYZ], numVertexes * sizeof(tess.xyz[0]) );
 	if ( ptr == NULL ) return;
 	Com_Memcpy( ptr, tess.xyz, numVertexes * sizeof(tess.xyz[0]) );
-	glBufferSubData( GL_ARRAY_BUFFER, g_geom.offset[ATTR_XYZ], numVertexes * sizeof(tess.xyz[0]), ptr );
+	gles3_upload_buffer_range( GL_ARRAY_BUFFER, g_geom.offset[ATTR_XYZ], numVertexes * sizeof(tess.xyz[0]), ptr );
 	mask |= 1 << ATTR_XYZ;
 
 	// st0
@@ -439,7 +484,7 @@ void vk_bind_lighting( int stage, int bundle )
 		if ( ptr == NULL ) return;
 		ComputeTexCoords( bundle, &tess.xstages[stage]->bundle[bundle] );
 		Com_Memcpy( ptr, tess.svars.texcoordPtr[bundle], st_size );
-		glBufferSubData( GL_ARRAY_BUFFER, off, st_size, ptr );
+		gles3_upload_buffer_range( GL_ARRAY_BUFFER, off, st_size, ptr );
 		g_geom.offset[ATTR_ST0] = off;
 		mask |= 1 << ATTR_ST0;
 	}
@@ -448,7 +493,7 @@ void vk_bind_lighting( int stage, int bundle )
 	ptr = gles3_geometry_buffer_map( &g_geom.offset[ATTR_NORMAL], nnn_size );
 	if ( ptr == NULL ) return;
 	Com_Memcpy( ptr, tess.normal, nnn_size );
-	glBufferSubData( GL_ARRAY_BUFFER, g_geom.offset[ATTR_NORMAL], nnn_size, ptr );
+	gles3_upload_buffer_range( GL_ARRAY_BUFFER, g_geom.offset[ATTR_NORMAL], nnn_size, ptr );
 	mask |= 1 << ATTR_NORMAL;
 
 	g_geom.enabled = mask;

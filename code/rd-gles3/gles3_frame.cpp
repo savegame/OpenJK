@@ -414,6 +414,19 @@ void vk_begin_frame( void )
 	glBindBuffer( GL_ARRAY_BUFFER, vk.vertex_buffer );
 	glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, vk.index_buffer );
 
+	// Orphan both streaming buffers' storage once per frame (re-specify with
+	// the same size, NULL data) instead of letting glBufferSubData/
+	// glMapBufferRange reuse the previous frame's storage starting at offset
+	// 0. Without this, the very first upload of a frame aliases bytes a
+	// draw call from the *previous* frame may still be reading on a tiled
+	// mobile GPU (Mali), forcing the driver to insert a GPU sync point
+	// before the write is allowed to proceed - a frame-to-frame stall on
+	// top of the per-draw-call cost that gles3_upload_buffer_range below
+	// addresses. This mirrors reference_port quake3e renderergles3
+	// gles3_map_geometry_buffer(), which orphans for the same reason.
+	glBufferData( GL_ARRAY_BUFFER, vk.geometry_buffer_size, NULL, GL_STREAM_DRAW );
+	glBufferData( GL_ELEMENT_ARRAY_BUFFER, vk.index_buffer_size, NULL, GL_STREAM_DRAW );
+
 	vk.renderPassIndex = RENDER_PASS_MAIN;
 }
 
