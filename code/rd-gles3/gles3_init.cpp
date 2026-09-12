@@ -132,8 +132,13 @@ void gles3_resize_geometry_buffers( void )
 
 static void vk_render_splash( void )
 {
-	// get something on screen asap: clear to the console black
-	glViewport( 0, 0, glConfig.vidWidth, glConfig.vidHeight );
+	// get something on screen asap: clear to the console black. This draws
+	// straight into the real default framebuffer (no FBO bound yet), so it
+	// must use vk.windowWidth/windowHeight (the real window/surface size,
+	// port stage 3 - see the comment on vk.windowWidth in vk_local.h), not
+	// glConfig.vidWidth/vidHeight (the possibly-landscape-swapped FBO/output
+	// size reported to the rest of the engine).
+	glViewport( 0, 0, vk.windowWidth, vk.windowHeight );
 	glClearColor( 0.0f, 0.0f, 0.0f, 1.0f );
 	glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT );
 	ri.WIN_Present( &window );
@@ -269,8 +274,12 @@ void vk_initialize( void )
 	glDepthMask( GL_TRUE );
 	glDepthFunc( GL_LEQUAL );
 	glFrontFace( GL_CCW );
-	glViewport( 0, 0, glConfig.vidWidth, glConfig.vidHeight );
-	glScissor( 0, 0, glConfig.vidWidth, glConfig.vidHeight );
+	// Default framebuffer (0) is still bound here (the first vk_begin_frame's
+	// gles3_fbo_bind() hasn't run yet) - real window size, not the possibly
+	// swapped glConfig.vidWidth/vidHeight, same reasoning as vk_render_splash
+	// above.
+	glViewport( 0, 0, vk.windowWidth, vk.windowHeight );
+	glScissor( 0, 0, vk.windowWidth, vk.windowHeight );
 	glClearColor( 0.0f, 0.0f, 0.0f, 1.0f );
 	glClearDepthf( 1.0f );
 
@@ -310,6 +319,52 @@ void vk_create_window( void )
 
 		if (r_ignorehwgamma->integer)
 			glConfig.deviceSupportsGamma = qfalse;
+
+		// Port stage 3 (gameport/docs/fbo_module.md, "FBO должен быть
+		// ландшафтным" / "Размер окна и буфера при повороте"): glConfig.
+		// vidWidth/vidHeight at this point is the REAL window/surface size
+		// WIN_Init just created. Stash that unconditionally (used only for
+		// the final blit viewport and the pre-FBO default-framebuffer setup
+		// below, on every platform) before possibly overwriting glConfig.
+		// vidWidth/vidHeight below.
+		vk.windowWidth = (uint32_t)glConfig.vidWidth;
+		vk.windowHeight = (uint32_t)glConfig.vidHeight;
+
+		// On this device the window is the portrait panel's usable bounds,
+		// e.g. 1080x2400 (shared/sdl/sdl_window.cpp's AURORA fullscreen
+		// branch, unchanged by this stage). Overwrite glConfig.vidWidth/
+		// vidHeight with the landscape output/FBO size the rest of the
+		// engine (aspect ratio, 3D projection, 2D/UI coordinate system)
+		// should see - the swap rule itself lives in
+		// gles3_fbo_output_size_for_window (gles3_fbo.cpp), shared with the
+		// live-resize path so both stay in step. Port stage 3, remark 3.
+		//
+		// The panel-type test fbo_module.md asks for ("H > W -> портретная
+		// панель") is done inside that helper against the already-known real
+		// window size rather than with an extra SDL_GetCurrentDisplayMode
+		// round-trip: rd-gles3 is a separate dynamically loaded module with
+		// no SDL access (see vk_local.h), and on this single-output device
+		// the fullscreen window's own shape mirrors the panel's current
+		// logical shape exactly.
+		{
+			uint32_t outW, outH;
+			gles3_fbo_output_size_for_window( vk.windowWidth, vk.windowHeight, &outW, &outH );
+			glConfig.vidWidth = (int)outW;
+			glConfig.vidHeight = (int)outH;
+
+			// Port stage 3, remark 1: seed the content rotation from the
+			// window shape right here, BEFORE the first vk_initialize(), so
+			// the very first frame is already drawn landscape rather than
+			// staying portrait until an orientation event arrives. Nothing
+			// downstream resets it any more (see gles3_fbo_init_program),
+			// so a later "gles3_set_rotation" from shared/sdl/sdl_input.cpp
+			// simply refines this with the real system orientation.
+			gles3_fbo_set_rotation( gles3_fbo_default_transform_for_window( vk.windowWidth, vk.windowHeight ) );
+
+			ri.Printf( PRINT_ALL, "gles3: window %ux%u -> output/FBO %dx%d, initial transform %d\n",
+				vk.windowWidth, vk.windowHeight, glConfig.vidWidth, glConfig.vidHeight,
+				gles3_fbo_get_rotation() );
+		}
 
 		gls.windowWidth = glConfig.vidWidth;
 		gls.windowHeight = glConfig.vidHeight;

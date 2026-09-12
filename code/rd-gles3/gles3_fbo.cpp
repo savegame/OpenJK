@@ -144,6 +144,55 @@ static void gles3_fbo_init_rotation_mats( void )
 	vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_270][2] =  1.0f; vk.fbo.rotationMats[GLES3_FBO_TRANSFORM_270][3] =  0.0f;
 }
 
+// Port stage 3: the engine-facing "output size" (== the FBO's own size) for a
+// given REAL window size. This game is landscape-only - its 3D projection and
+// its whole 2D/UI layer are built from glConfig.vidWidth/vidHeight, and a
+// portrait pair there yields a squashed scene and an off-screen menu, not a
+// rotated game - so on a portrait window the output size is the transpose of
+// the window, never the window itself (fbo_module.md, "Размер окна и буфера
+// при повороте"; the same "the buffer is ALWAYS landscape" rule the Aurora
+// quake3e port's gles3_fbo_compute_size settled on). A landscape window
+// (tablet/monitor/TV, or a desktop host build) needs no swap.
+//
+// Orienting by the window's own shape rather than by the current rotation is
+// deliberate: the two disagree the moment an external display is involved
+// (panel type flips to landscape, so the transform goes to 0, while the
+// window is still portrait), and it is the shape, not the transform, that
+// decides what the engine can render into. The transform then decides only
+// how that buffer is drawn on screen.
+void gles3_fbo_output_size_for_window( uint32_t winW, uint32_t winH, uint32_t *outW, uint32_t *outH )
+{
+#ifdef AURORA
+	if ( winH > winW ) {
+		if ( outW ) *outW = winH;
+		if ( outH ) *outH = winW;
+		return;
+	}
+#endif
+	if ( outW ) *outW = winW;
+	if ( outH ) *outH = winH;
+}
+
+// Port stage 3, remark 1: the transform to start up with, before the first
+// SDL_DISPLAYEVENT_ORIENTATION (or the initial explicit apply) ever reaches
+// "gles3_set_rotation" from shared/sdl/sdl_input.cpp. A portrait window means
+// a portrait panel, where a landscape game's buffer transform is only ever
+// 90 or 270 (fbo_module.md, "Маппинг ориентаций под ориентацию игры") - 90
+// being what that document's table gives for both the landscape hold and the
+// unknown/initial orientation, i.e. exactly what sdl_input.cpp's own
+// aurora_bufferTransformByOrientation[] defaults to. So the very first frame
+// is already landscape instead of rendering portrait until an orientation
+// event happens to arrive.
+int gles3_fbo_default_transform_for_window( uint32_t winW, uint32_t winH )
+{
+#ifdef AURORA
+	if ( winH > winW ) {
+		return GLES3_FBO_TRANSFORM_90;
+	}
+#endif
+	return GLES3_FBO_TRANSFORM_NORMAL;
+}
+
 void gles3_fbo_init_program( void )
 {
 	vk.fbo.blitProgram = gles3_link_program( VS_FBO_BLIT, NULL, FS_FBO_BLIT, NULL );
@@ -152,7 +201,22 @@ void gles3_fbo_init_program( void )
 
 	gles3_fbo_init_rotation_mats();
 	vk.fbo.scale = 1.0f;
-	vk.fbo.transform = GLES3_FBO_TRANSFORM_NORMAL;
+
+	// vk.fbo.transform is deliberately NOT reset here (port stage 3, remark
+	// 1). This runs from vk_initialize(), which is re-entered on every FBO
+	// rebuild - including SP's "dead window" contract (RE_Shutdown then a
+	// second R_Init once a map starts loading) and any live resize - so
+	// resetting it to NORMAL here silently threw away the rotation that
+	// vk_create_window and/or a "gles3_set_rotation" from
+	// shared/sdl/sdl_input.cpp had already established, leaving the content
+	// portrait while the compositor had already been told the buffer was
+	// landscape. The current transform belongs to the window/orientation,
+	// not to this GL program, and vk_create_window seeds it from the window
+	// shape (gles3_fbo_default_transform_for_window) before the first
+	// vk_initialize() ever runs.
+	if ( vk.fbo.transform < GLES3_FBO_TRANSFORM_NORMAL || vk.fbo.transform > GLES3_FBO_TRANSFORM_270 ) {
+		vk.fbo.transform = GLES3_FBO_TRANSFORM_NORMAL;
+	}
 }
 
 void gles3_fbo_destroy_program( void )
@@ -312,31 +376,50 @@ qboolean gles3_fbo_resize( uint32_t width, uint32_t height )
 // called on a pure device rotation: rotation only ever changes
 // gles3_fbo_set_rotation's transform and the Wayland buffer transform
 // (sdl_input.cpp), the buffer size itself never changes for that case.
+// width/height are the REAL new window/surface size, exactly as SDL reported
+// it (shared/sdl/sdl_input.cpp's SDL_WINDOWEVENT_SIZE_CHANGED -> the
+// "gles3_resize" console command). The engine-facing output size and the
+// FBO's own size are derived from it here, not passed in, so that the single
+// landscape-only rule lives in one place
+// (gles3_fbo_output_size_for_window above).
 void gles3_fbo_handle_resize( uint32_t width, uint32_t height )
 {
+	uint32_t outW, outH;
+
 	if ( width == 0 || height == 0 ) {
 		return;
 	}
-	if ( width == (uint32_t)glConfig.vidWidth && height == (uint32_t)glConfig.vidHeight ) {
+	if ( width == vk.windowWidth && height == vk.windowHeight ) {
 		return;
 	}
 
-	glConfig.vidWidth = width;
-	glConfig.vidHeight = height;
+	vk.windowWidth = width;
+	vk.windowHeight = height;
+
+	gles3_fbo_output_size_for_window( width, height, &outW, &outH );
+
+	// Everything the engine measures its output by - aspect ratio and 3D
+	// projection (tr_main.cpp), the 640x480-virtual 2D/UI mapping
+	// (SCR_AdjustFrom640), console reflow - reads glConfig.vidWidth/
+	// vidHeight, so updating them here IS the "recompute the aspect ratio
+	// for the new FBO size" step: they carry the FBO's landscape dimensions,
+	// never the portrait window's (port stage 3, remark 3).
+	glConfig.vidWidth = (int)outW;
+	glConfig.vidHeight = (int)outH;
 
 	// The rd-gles3 "output size" used every frame by gles3_get_viewport_rect
 	// (gles3_frame.cpp) for the 2D viewport/scissor - renderScaleX/Y are left
 	// alone (r_renderScale is CVAR_LATCH, not something a live resize should
 	// touch; vk_initialize always leaves them at 1.0 in this backend too).
-	vk.renderWidth = width;
-	vk.renderHeight = height;
+	vk.renderWidth = outW;
+	vk.renderHeight = outH;
 
-	gls.windowWidth = width;
-	gls.windowHeight = height;
-	gls.captureWidth = width;
-	gls.captureHeight = height;
+	gls.windowWidth = outW;
+	gls.windowHeight = outH;
+	gls.captureWidth = outW;
+	gls.captureHeight = outH;
 
-	gles3_fbo_resize( width, height );
+	gles3_fbo_resize( outW, outH );
 
 	// Re-establish the default-framebuffer viewport/scissor immediately
 	// rather than waiting for the next draw call to notice: harmless to do
@@ -344,11 +427,13 @@ void gles3_fbo_handle_resize( uint32_t width, uint32_t height )
 	// (gles3_frame.cpp), because vk_begin_frame() unconditionally calls
 	// gles3_state_cache_invalidate() before the next frame's first draw, so
 	// the cache resyncs for free either way (same reasoning as
-	// gles3_fbo_blit_to_screen() above).
+	// gles3_fbo_blit_to_screen() above). The default framebuffer is the real
+	// window, so this one takes the window size, not the output size.
 	glViewport( 0, 0, width, height );
 	glScissor( 0, 0, width, height );
 
-	ri.Printf( PRINT_ALL, "gles3_fbo: window resized to %ux%u\n", width, height );
+	ri.Printf( PRINT_ALL, "gles3_fbo: window resized to %ux%u -> output/FBO %ux%u\n",
+		width, height, outW, outH );
 }
 
 void gles3_fbo_bind( void )
@@ -450,7 +535,15 @@ void gles3_fbo_blit_to_screen( void )
 	glDisable( GL_SCISSOR_TEST );
 	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
 
-	glViewport( 0, 0, glConfig.vidWidth, glConfig.vidHeight );
+	// The REAL window size: this draws into the default framebuffer, which
+	// glConfig.vidWidth/vidHeight no longer describes once the FBO is the
+	// landscape transpose of a portrait window (port stage 3, remark 3 - see
+	// the comment on vk.windowWidth in vk_local.h). The quad itself is full
+	// NDC and a 90/270 rotation maps that square onto itself, so it still
+	// covers the whole window; because the FBO is the exact transpose of the
+	// window, the rotated texture lands 1:1 on the window pixels and the
+	// aspect ratio comes out undistorted with no letterbox math needed.
+	glViewport( 0, 0, vk.windowWidth, vk.windowHeight );
 
 	glUseProgram( vk.fbo.blitProgram );
 

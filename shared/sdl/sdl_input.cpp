@@ -166,10 +166,14 @@ static void Aurora_ApplyOrientation( SDL_DisplayOrientation orientation )
 // CURRENT orientation is deliberately NOT done here: IN_Init() runs from
 // deep inside WIN_Init(), which itself runs *before* vk_initialize() on this
 // very first call (vk_create_window() calls WIN_Init() first, then
-// vk_initialize() - see gles3_init.cpp). gles3_fbo_init_program() (called
-// from vk_initialize) unconditionally resets vk.fbo.transform to NORMAL, so
-// a "gles3_set_rotation" queued this early would just be clobbered a moment
-// later. Worse, SP has a "dead window" startup contract (RE_Shutdown then a
+// vk_initialize() - see gles3_init.cpp), so the gles3_* console commands do
+// not exist yet. Losing the rotation that way no longer leaves the frame
+// portrait, though: vk_create_window seeds the renderer's transform from the
+// window's own shape (gles3_fbo_default_transform_for_window) and
+// gles3_fbo_init_program no longer resets it, so the content is landscape
+// from the very first frame and a "gles3_set_rotation" arriving later only
+// refines it with the real system orientation (port stage 3, remark 1).
+// SP also has a "dead window" startup contract (RE_Shutdown then a
 // second R_Init on the actual map load, see vk_initialize()'s comment) that
 // removes and re-adds the gles3_* console commands in between - a command
 // queued this early can land in the gap and be reported "Unknown command".
@@ -1152,11 +1156,34 @@ static void IN_ProcessEvents( void )
 						// dynamically loaded module, see vk_local.h).
 						int newW = e.window.data1;
 						int newH = e.window.data2;
+						// The engine's output size is NOT the window size on
+						// a portrait panel: the game is landscape-only, so
+						// the renderer renders into an FBO whose sides are
+						// transposed relative to the window and reports THAT
+						// as glConfig.vidWidth/vidHeight (port stage 3,
+						// remark 3 - gles3_fbo_output_size_for_window,
+						// code/rd-gles3/gles3_fbo.cpp). cls.glconfig is the
+						// client's own copy of the same numbers (filled from
+						// the renderer's glConfig via re.BeginRegistration,
+						// cl_main.cpp) and drives the client's 2D layout -
+						// console reflow, SCR_AdjustFrom640 - so it has to
+						// carry the output size too, or the UI would be laid
+						// out portrait over a landscape frame. The renderer
+						// gets the raw WINDOW size and applies the same rule
+						// itself, keeping one source of truth for it.
+						int outW = newW;
+						int outH = newH;
 
-						if ( newW > 0 && newH > 0 && ( newW != cls.glconfig.vidWidth || newH != cls.glconfig.vidHeight ) )
+						if ( newH > newW )
 						{
-							cls.glconfig.vidWidth = newW;
-							cls.glconfig.vidHeight = newH;
+							outW = newH;
+							outH = newW;
+						}
+
+						if ( newW > 0 && newH > 0 && ( outW != cls.glconfig.vidWidth || outH != cls.glconfig.vidHeight ) )
+						{
+							cls.glconfig.vidWidth = outW;
+							cls.glconfig.vidHeight = outH;
 							Con_CheckResize();
 
 							Cbuf_ExecuteText( EXEC_APPEND, va( "gles3_resize %d %d\n", newW, newH ) );

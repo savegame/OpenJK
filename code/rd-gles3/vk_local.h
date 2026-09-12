@@ -562,6 +562,29 @@ typedef struct {
 	uint32_t		renderWidth;
 	uint32_t		renderHeight;
 
+	// Port stage 3 (gameport/docs/fbo_module.md, "Размер окна и буфера при
+	// повороте" / "Маппинг ориентаций под ориентацию игры"): the REAL,
+	// physical pixel size of the SDL window / default framebuffer / Wayland
+	// surface, as created by WIN_Init and updated only by a genuine
+	// SDL_WINDOWEVENT_SIZE_CHANGED (gles3_fbo_handle_resize) - NEVER the
+	// swapped/landscape size. This device's panel is portrait, so this stays
+	// portrait for as long as the window lives on it; it never changes on a
+	// pure device-rotation event, only on an actual window/buffer resize.
+	//
+	// glConfig.vidWidth/vidHeight (and renderWidth/renderHeight above) are,
+	// by contrast, the "output size" reported to the rest of the engine
+	// (aspect ratio, 3D projection, 2D/UI coordinate system) - for a
+	// landscape-only game on a portrait panel those are the FBO's landscape
+	// dimensions (width/height transposed relative to this windowWidth/
+	// windowHeight), NOT the real window size. Only two call sites need the
+	// real size instead: the final blit-to-screen viewport
+	// (gles3_fbo_blit_to_screen, gles3_fbo.cpp) and the pre-FBO default-
+	// framebuffer setup in vk_initialize/vk_render_splash (gles3_init.cpp) -
+	// both draw straight into the real, unswapped default framebuffer/
+	// window, which glConfig.vidWidth/vidHeight no longer describes.
+	uint32_t		windowWidth;
+	uint32_t		windowHeight;
+
 	float			renderScaleX;
 	float			renderScaleY;
 	float			yscale2D;
