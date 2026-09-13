@@ -88,25 +88,32 @@ typedef enum {
 	TB_JUMP,
 	TB_CROUCH,
 	TB_USE,
+	TB_SAVE,
+	TB_LOAD,
 	TB_COUNT
 } touchButtonIndex_t;
 
 typedef struct {
 	const char			*downCmd;	// "+attack\n" etc - NULL for the menu button (sends A_ESCAPE instead)
-	const char			*upCmd;		// "-attack\n"
-	auroraTouchIcon_t	icon;
+	const char			*upCmd;		// "-attack\n" - NULL for the menu button and for oneShot buttons
+	auroraTouchIcon_t	icon;		// ignored by the renderer when label != NULL
+	const char			*label;		// NULL: draw `icon` (see tr_touchui.h's comment). Non-NULL:
+								// draw this text instead - a static string literal (SAVE/LOAD).
 	int					latch;		// 1: a tap toggles it on, the next tap off (crouch)
+	int					oneShot;	// 1: a tap fires downCmd once, nothing on release (quicksave/
+								// quickload - stateless engine commands, not a held +action)
 
 	// runtime state
 	int			held;
 	SDL_FingerID	finger;
-	int			down;		// action currently applied (for non-latch buttons)
+	int			down;		// action currently applied (for non-latch, non-oneShot buttons)
 	int			latched;	// latch currently on (for latch buttons)
 
 	// Fix (user report): a finger holding an action button must not block
 	// camera look - it keeps driving the pad with its own delta, exactly
 	// like touchPad, while the button stays held. Not used by the menu
-	// button (downCmd == NULL).
+	// button (downCmd == NULL) or by oneShot buttons (a tap is instant,
+	// there is nothing meaningful to drag).
 	float		lookLastX, lookLastY;	// WINDOW px, last processed point for this finger
 	float		lookRemX, lookRemY;		// sub-pixel carry, mirrors touchPad.remX/Y
 
@@ -115,12 +122,21 @@ typedef struct {
 } touchButton_t;
 
 static touchButton_t touchButtons[TB_COUNT] = {
-	{ NULL,           NULL,            AURORA_TOUCH_ICON_MENU,    0 },
-	{ "+attack\n",    "-attack\n",     AURORA_TOUCH_ICON_FIRE,    0 },
-	{ "+altattack\n", "-altattack\n",  AURORA_TOUCH_ICON_ALTFIRE, 0 },
-	{ "+moveup\n",    "-moveup\n",     AURORA_TOUCH_ICON_JUMP,    0 },
-	{ "+movedown\n",  "-movedown\n",   AURORA_TOUCH_ICON_CROUCH,  0 },
-	{ "+use\n",       "-use\n",        AURORA_TOUCH_ICON_USE,     0 },
+	{ NULL,           NULL,            AURORA_TOUCH_ICON_MENU,    NULL,   0, 0 },
+	{ "+attack\n",    "-attack\n",     AURORA_TOUCH_ICON_FIRE,    NULL,   0, 0 },
+	{ "+altattack\n", "-altattack\n",  AURORA_TOUCH_ICON_ALTFIRE, NULL,   0, 0 },
+	{ "+moveup\n",    "-moveup\n",     AURORA_TOUCH_ICON_JUMP,    NULL,   0, 0 },
+	{ "+movedown\n",  "-movedown\n",   AURORA_TOUCH_ICON_CROUCH,  NULL,   0, 0 },
+	{ "+use\n",       "-use\n",        AURORA_TOUCH_ICON_USE,     NULL,   0, 0 },
+	// Quicksave/quickload (port task B-003): "save quick"/"load quick" is the
+	// exact slot name JKA's own in-game menu uses for these
+	// (code/ui/ui_main.cpp's "savegame"/"load_quick" handlers and
+	// code/ui/ui_shared.cpp's always-allowed command list both spell it this
+	// way for non-JK2_MODE builds) - sharing it means a save made from this
+	// button loads correctly from the game's own quickload menu entry and
+	// vice versa. One-shot: no held state, no -command.
+	{ "save quick\n", NULL,            AURORA_TOUCH_ICON_MENU,    "SAVE", 0, 1 },
+	{ "load quick\n", NULL,            AURORA_TOUCH_ICON_MENU,    "LOAD", 0, 1 },
 };
 
 // ---------------------------------------------------------------------------
@@ -149,6 +165,22 @@ static struct {
 	float			lastX, lastY;	// WINDOW px (native, matches SDL_MOUSEMOTION's own space)
 	float			remX, remY;		// FBO-local px, sub-pixel carry - mirrors sdl_input.cpp's aurora_touch.remX/Y
 } touchPad;
+
+// ---------------------------------------------------------------------------
+// cinematic skip (port task B-003) - top-left, the same slot the menu
+// button occupies during normal gameplay (see Aurora_TouchUI_Layout: laid
+// out right after TB_MENU, same centre/radius). A separate control, not an
+// entry in touchButtons[]: it has no +/- command pair, no held/latch state
+// worth keeping between frames, and its action depends on WHICH kind of
+// cinematic is currently playing, decided at press time (see
+// Aurora_TouchUI_SkipCinematic) rather than a fixed command string.
+// ---------------------------------------------------------------------------
+
+static struct {
+	int				held;
+	SDL_FingerID	finger;
+	float			cx, cy, radiusMm;	// VISUAL mm - mirrors touchButtons[TB_MENU]
+} touchSkip;
 
 // ---------------------------------------------------------------------------
 // visibility state
@@ -338,6 +370,31 @@ static void Aurora_TouchUI_Layout( void )
 	touchButtons[TB_MENU].cx = margin + smallMm * 0.5f;
 	touchButtons[TB_MENU].cy = margin + smallMm * 0.5f;
 
+	// The cinematic-skip control (port task B-003) takes over the menu
+	// button's exact slot whenever it is shown (Aurora_TouchUI_Frame only
+	// ever sends one or the other, never both - see
+	// Aurora_TouchUI_CinematicSkippable) - "слева вверху", same corner,
+	// same size.
+	touchSkip.cx = touchButtons[TB_MENU].cx;
+	touchSkip.cy = touchButtons[TB_MENU].cy;
+	touchSkip.radiusMm = touchButtons[TB_MENU].radiusMm;
+
+	// Top-centre: quicksave/quickload (port task B-003), bigger than the
+	// small utility buttons so a 4-letter word stays readable, flanking the
+	// visual midline clear of both the menu button (top-left) and USE
+	// (top-right, laid out below) at any reasonable screen width.
+	{
+		const float textRadiusMm = sizeMm * 0.65f;
+
+		touchButtons[TB_SAVE].radiusMm = textRadiusMm;
+		touchButtons[TB_SAVE].cx = visualWmm * 0.5f - textRadiusMm - gapMm * 0.5f;
+		touchButtons[TB_SAVE].cy = margin + smallMm * 0.5f;
+
+		touchButtons[TB_LOAD].radiusMm = textRadiusMm;
+		touchButtons[TB_LOAD].cx = visualWmm * 0.5f + textRadiusMm + gapMm * 0.5f;
+		touchButtons[TB_LOAD].cy = touchButtons[TB_SAVE].cy;
+	}
+
 	// Bottom-right cluster: fire is the large central button (the thumb's
 	// resting position), jump above it, crouch to its left, alt-fire on the
 	// upper-left diagonal, use further out to the left - mirrors the
@@ -392,6 +449,108 @@ static int Aurora_TouchUI_InGameplay( void )
 
 /*
 =================
+Aurora_TouchUI_RoqCinematicActive / CameraCutsceneActive / CinematicActive / CinematicSkippable
+
+Port task B-003, "kнопка skip ... на всех игровых роликах, видео и
+катсценах". JKA (SP) has two unrelated mechanisms that both count as "a
+cinematic is playing", and this module can only see one of them directly:
+
+  - Full-screen/in-game ROQ video (cls.state == CA_CINEMATIC or
+    CL_IsRunningInGameCinematic()) is entirely client-engine state - this
+    file is compiled into the same executable as cl_cin.cpp, so `cls` and
+    CL_IsRunningInGameCinematic() (client/client.h) are directly readable.
+    This is the EXACT condition CL_KeyDownEvent (cl_keys.cpp) already uses
+    to decide "any key skips the video" - matched 1:1 on purpose (see
+    Aurora_TouchUI_SkipCinematic).
+
+  - Scripted in-engine camera cutscenes (ICARUS CAM_* moving client_camera,
+    code/cgame/cg_camera.cpp's `in_camera`) are cgame-DLL state: SPGame is
+    a separate SHARED library (code/game/CMakeLists.txt) the client loads
+    via Sys_LoadDll, so `in_camera` itself is not an address this file can
+    read. cg_camera.cpp bridges it out through a plain cvar
+    ("cg_inCameraCutscene", CGCam_Enable/Disable, cg_main.cpp's CG_Shutdown
+    for the safety-net reset) - the same kind of cross-module cvar bridge
+    already used elsewhere in this port (cl_auroraFboScale) and by the
+    engine itself (skippingCinematic, independently Cvar_Get by
+    cl_main.cpp/cg_main.cpp/g_main.cpp/common.cpp - reading a cvar nobody
+    local registered first is normal here, Cvar_VariableIntegerValue
+    returns 0 for an unknown name).
+
+CinematicSkippable additionally requires !Key_GetCatcher(): if the console
+or a UI menu is up, CL_KeyDownEvent's own cinematic-skip branch does NOT
+fire (keys go to console/UI instead) - the skip button must not claim to
+do something the engine itself would not do from the same input right now.
+=================
+*/
+static int Aurora_TouchUI_RoqCinematicActive( void )
+{
+	return cls.state == CA_CINEMATIC || CL_IsRunningInGameCinematic();
+}
+
+static int Aurora_TouchUI_CameraCutsceneActive( void )
+{
+	return Cvar_VariableIntegerValue( "cg_inCameraCutscene" ) != 0;
+}
+
+static int Aurora_TouchUI_CinematicActive( void )
+{
+	return Aurora_TouchUI_RoqCinematicActive() || Aurora_TouchUI_CameraCutsceneActive();
+}
+
+static int Aurora_TouchUI_CinematicSkippable( void )
+{
+	return Aurora_TouchUI_CinematicActive() && !Key_GetCatcher();
+}
+
+/*
+=================
+Aurora_TouchUI_SkipCinematic
+
+The actual skip action, dispatched on WHICH kind is currently playing
+(favouring the ROQ path if - implausibly - both were true at once, since
+that is the one with an explicit start-of-playback grace period to
+respect). Deliberately calls the same engine entry points the vanilla
+Escape/use-button skip already uses, not a hand-rolled stop - see the two
+branches below for exactly which, and why.
+=================
+*/
+static void Aurora_TouchUI_SkipCinematic( void )
+{
+	if ( Aurora_TouchUI_RoqCinematicActive() )
+	{
+		// Exactly what CL_KeyDownEvent (cl_keys.cpp) does for ANY key while
+		// cls.state == CA_CINEMATIC or CL_IsRunningInGameCinematic(): both
+		// the full-screen intro/outro movies and an in-game ROQ played over
+		// gameplay stop through this one call. bAllowRefusal=qtrue keeps
+		// the vanilla ~1.2s grace period (SCR_StopCinematic, cl_cin.cpp) so
+		// a stray tap right as playback starts can't skip it prematurely -
+		// same as a real Escape press would behave.
+		SCR_StopCinematic( qtrue );
+		return;
+	}
+
+	if ( Aurora_TouchUI_CameraCutsceneActive() )
+	{
+		// Mirrors the "exitview" server command JKA's own UI issues for
+		// exactly this purpose (code/ui/ui_shared.cpp's always-allowed
+		// command list) - cls.state == CA_ACTIVE here (a camera cutscene
+		// is gameplay state, just rendered differently), so this reaches
+		// the game DLL's Svcmd_ExitView_f (code/game/g_svcmds.cpp) via the
+		// normal "unknown client command -> forward to server" path
+		// (CL_ForwardCommandToServer, cl_main.cpp). That toggles
+		// G_StartCinematicSkip()/G_StopCinematicSkip() (g_active.cpp):
+		// fast-forwards the ICARUS camera script (timescale 100) until it
+		// ends on its own - exactly what holding the "use" button already
+		// does mid-cutscene (ClientCinematicThink, same file). This is a
+		// fast-forward, not a jump-cut: it is the only skip primitive
+		// JKA's own scripting exposes for this mechanism - see this task's
+		// write-up for why a truer instant-skip isn't available here.
+		Cbuf_ExecuteText( EXEC_APPEND, "exitview\n" );
+	}
+}
+
+/*
+=================
 Aurora_TouchUI_Action
 =================
 */
@@ -426,6 +585,15 @@ static void Aurora_TouchUI_PressButton( touchButton_t *b, SDL_FingerID finger )
 	{
 		Sys_QueEvent( 0, SE_KEY, A_ESCAPE, qtrue, 0, NULL );
 		Sys_QueEvent( 0, SE_KEY, A_ESCAPE, qfalse, 0, NULL );
+		return;
+	}
+
+	if ( b->oneShot )
+	{
+		// Quicksave/quickload: fire the command once on the tap; b->down/
+		// b->latched are deliberately left at 0 so Aurora_TouchUI_ReleaseButton
+		// finds nothing to undo on FINGERUP (there is no "-save").
+		Cbuf_ExecuteText( EXEC_APPEND, b->downCmd );
 		return;
 	}
 
@@ -597,6 +765,44 @@ void Aurora_TouchUI_FingerEvent( const SDL_Event *ev )
 		vy = visY / touchPixelsPerMm;
 	}
 
+	if ( Aurora_TouchUI_CinematicSkippable() )
+	{
+		// Skip-only mode (port task B-003): the rest of the overlay is not
+		// drawn (see Aurora_TouchUI_Frame), so it must not react to touches
+		// either - only the skip control, same slot as the menu button, is
+		// live. Still respects Aurora_TouchUI_Enabled() (cl_touchUI 0, or a
+		// physical input override) - "off" means fully off, skip included.
+		if ( ev->type == SDL_FINGERDOWN && !touchSkip.held && Aurora_TouchUI_Enabled() )
+		{
+			float dx = vx - touchSkip.cx, dy = vy - touchSkip.cy;
+
+			if ( dx * dx + dy * dy <= touchSkip.radiusMm * touchSkip.radiusMm )
+			{
+				touchSkip.held = 1;
+				touchSkip.finger = finger.fingerId;
+				Aurora_TouchUI_SkipCinematic();
+			}
+		}
+		else if ( ev->type == SDL_FINGERUP )
+		{
+			// Let go of anything else this finger might have been holding
+			// right as the cinematic started, exactly like the "not shown"
+			// branch below - a cinematic starting mid-gesture must not
+			// leave a gameplay button/stick/pad stuck.
+			for ( i = 0; i < TB_COUNT; i++ )
+			{
+				if ( touchButtons[i].held && touchButtons[i].finger == finger.fingerId )
+				{
+					Aurora_TouchUI_ReleaseButton( &touchButtons[i] );
+				}
+			}
+			if ( touchStick.held && touchStick.finger == finger.fingerId ) Aurora_TouchUI_StickStop();
+			if ( touchPad.held && touchPad.finger == finger.fingerId ) touchPad.held = 0;
+			if ( touchSkip.held && touchSkip.finger == finger.fingerId ) touchSkip.held = 0;
+		}
+		return;
+	}
+
 	if ( !Aurora_TouchUI_Enabled() || !Aurora_TouchUI_InGameplay() )
 	{
 		// The overlay is not shown - still let go of anything this finger
@@ -612,6 +818,7 @@ void Aurora_TouchUI_FingerEvent( const SDL_Event *ev )
 			}
 			if ( touchStick.held && touchStick.finger == finger.fingerId ) Aurora_TouchUI_StickStop();
 			if ( touchPad.held && touchPad.finger == finger.fingerId ) touchPad.held = 0;
+			if ( touchSkip.held && touchSkip.finger == finger.fingerId ) touchSkip.held = 0;
 		}
 		return;
 	}
@@ -631,8 +838,9 @@ void Aurora_TouchUI_FingerEvent( const SDL_Event *ev )
 
 			// Fix (user report): the same finger also drives the camera
 			// while it holds an action button - never for the menu button
-			// (downCmd == NULL, sends Escape and nothing else).
-			if ( b->downCmd )
+			// (downCmd == NULL, sends Escape and nothing else) or for a
+			// oneShot button (save/load - a tap is instant, no held drag).
+			if ( b->downCmd && !b->oneShot )
 			{
 				b->lookLastX = finger.x * (float)windowW;
 				b->lookLastY = finger.y * (float)windowH;
@@ -697,12 +905,13 @@ void Aurora_TouchUI_FingerEvent( const SDL_Event *ev )
 
 		// A finger holding an action button (fire/altfire/jump/crouch/use)
 		// keeps turning the camera as it slides - the button stays held
-		// regardless (see Aurora_TouchUI_ReleaseButton on FINGERUP).
+		// regardless (see Aurora_TouchUI_ReleaseButton on FINGERUP). Not
+		// for oneShot buttons (save/load) - see the FINGERDOWN comment above.
 		for ( i = 0; i < TB_COUNT; i++ )
 		{
 			touchButton_t *b = &touchButtons[i];
 
-			if ( b->held && b->finger == finger.fingerId && b->downCmd )
+			if ( b->held && b->finger == finger.fingerId && b->downCmd && !b->oneShot )
 			{
 				Aurora_TouchUI_LookMove( finger.x * (float)windowW, finger.y * (float)windowH,
 					&b->lookLastX, &b->lookLastY, &b->lookRemX, &b->lookRemY );
@@ -821,6 +1030,46 @@ void Aurora_TouchUI_Frame( void )
 	windowW = touchLayoutWindowW;
 	windowH = touchLayoutWindowH;
 
+	if ( Aurora_TouchUI_CinematicSkippable() && Aurora_TouchUI_Enabled() )
+	{
+		// Skip-only overlay (port task B-003): every other control is
+		// released (mirrors the hide path below) and NOT sent to the
+		// renderer - only the skip button, top-left, same slot the menu
+		// button uses in normal gameplay (see Aurora_TouchUI_Layout).
+		for ( i = 0; i < TB_COUNT; i++ )
+		{
+			Aurora_TouchUI_ReleaseButton( &touchButtons[i] );
+		}
+		Aurora_TouchUI_StickStop();
+		touchPad.held = 0;
+
+		Com_Memset( &overlay, 0, sizeof( overlay ) );
+		overlay.windowWidth = windowW;
+		overlay.windowHeight = windowH;
+		overlay.pixelsPerMm = touchPixelsPerMm;
+		overlay.alpha = cl_touchUIAlpha->value;
+		overlay.transform = Aurora_TouchUI_GetTransform();
+
+		overlay.numButtons = 1;
+		{
+			float wx, wy;
+
+			Aurora_TouchUI_VisualToWindow( touchSkip.cx * touchPixelsPerMm, touchSkip.cy * touchPixelsPerMm, windowW, windowH, &wx, &wy );
+
+			overlay.buttons[0].x = wx;
+			overlay.buttons[0].y = wy;
+			overlay.buttons[0].radius = touchSkip.radiusMm * touchPixelsPerMm;
+			overlay.buttons[0].label = "SKIP";
+			overlay.buttons[0].pressed = touchSkip.held;
+		}
+
+		if ( re.Aurora_SetTouchOverlay )
+		{
+			re.Aurora_SetTouchOverlay( &overlay );
+		}
+		return;
+	}
+
 	enabled = Aurora_TouchUI_Enabled();
 	gameplay = Aurora_TouchUI_InGameplay();
 
@@ -835,6 +1084,7 @@ void Aurora_TouchUI_Frame( void )
 		}
 		Aurora_TouchUI_StickStop();
 		touchPad.held = 0;
+		touchSkip.held = 0;
 
 		if ( re.Aurora_SetTouchOverlay )
 		{
@@ -866,6 +1116,7 @@ void Aurora_TouchUI_Frame( void )
 		overlay.buttons[i].y = wy;
 		overlay.buttons[i].radius = b->radiusMm * touchPixelsPerMm;
 		overlay.buttons[i].icon = b->icon;
+		overlay.buttons[i].label = b->label;
 		overlay.buttons[i].pressed = b->held || b->latched;
 	}
 
@@ -911,6 +1162,7 @@ void Aurora_TouchUI_Init( void )
 
 	Com_Memset( &touchStick, 0, sizeof( touchStick ) );
 	Com_Memset( &touchPad, 0, sizeof( touchPad ) );
+	Com_Memset( &touchSkip, 0, sizeof( touchSkip ) );
 	touchLayoutWindowW = touchLayoutWindowH = 0;
 
 	// A gamepad may already be connected at launch - IN_Init calls this
@@ -928,6 +1180,7 @@ void Aurora_TouchUI_Shutdown( void )
 	}
 	Aurora_TouchUI_StickStop();
 	touchPad.held = 0;
+	touchSkip.held = 0;
 
 	if ( re.Aurora_SetTouchOverlay )
 	{

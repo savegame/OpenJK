@@ -93,6 +93,18 @@ void CGCam_Enable( void )
 
 	in_camera = true;
 
+	// Aurora touch-UI bridge (port task B-003): `in_camera` lives in this
+	// SPGame shared library, not in the client engine executable that owns
+	// shared/sdl/sdl_touchui.cpp (see code/game/CMakeLists.txt - SPGame is
+	// a separate SHARED lib the client Sys_LoadDll's) - a cvar is the same
+	// cross-module bridge this port already uses elsewhere (cl_auroraFboScale)
+	// and that the engine itself uses for "skippingCinematic". Read back by
+	// Aurora_TouchUI_CameraCutsceneActive (sdl_touchui.cpp) to hide the rest
+	// of the touch overlay and show its skip button during a scripted
+	// camera cutscene, exactly like it already does for CA_CINEMATIC/
+	// CL_IsRunningInGameCinematic() ROQ playback.
+	cgi_Cvar_Set( "cg_inCameraCutscene", "1" );
+
 	client_camera.next_roff_time = 0;
 
 	if ( g_entities[0].inuse && g_entities[0].client )
@@ -136,6 +148,10 @@ CGCam_Disable
 void CGCam_Disable( void )
 {
 	in_camera = false;
+
+	// Aurora touch-UI bridge (port task B-003) - see the matching
+	// cgi_Cvar_Set in CGCam_Enable above for why this cvar exists.
+	cgi_Cvar_Set( "cg_inCameraCutscene", "0" );
 
 	client_camera.bar_alpha = 1.0f;
 	client_camera.bar_time = cg.time;

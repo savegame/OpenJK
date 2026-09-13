@@ -38,6 +38,7 @@ along with OpenJK; if not, see <http://www.gnu.org/licenses/>.
 
 #include <math.h>
 #include <string.h>
+#include <cfloat>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -265,6 +266,61 @@ static void Aurora_TouchIcon( ImDrawList *list, auroraTouchIcon_t icon, const Im
 
 /*
 ====================
+Aurora_TouchUI_AddLabel
+
+Text alternative to Aurora_TouchIcon, for buttons whose meaning isn't a
+shape people already know (save/load/skip - port task B-003; the rest of
+the overlay keeps its procedural icons, see gles3_touchui_draw.h's comment
+on `label`). Uses ImGui's own default font (already loaded for
+Aurora_TouchUI_EnsureInit's font-atlas requirement, see that function's
+comment) at a size derived from the button's on-screen diameter - no extra
+font baking needed for four short, all-caps words.
+
+Orientation: AddText() always lays glyph quads out upright in the CURRENT
+draw-list space, which for every OTHER primitive in this file is window
+space (see gles3_touchui_draw.h's big comment - icon shapes route every
+point through Aurora_TouchUI_RotateOffset before adding them to the
+already-window-space centre, so they still read as upright to the player
+after the compositor's own rotation compensation, whatever `transform` is).
+Text can't be built that way up front (AddText has no rotation parameter),
+so instead: lay the word out centred on `c` UNROTATED first (cheapest to
+size/position correctly), then rotate just the vertices AddText() appended
+(a pure rigid rotation about `c`, same 4-case table as every other shape
+here) - equivalent end result, one extra pass over a handful of quads.
+====================
+*/
+static void Aurora_TouchUI_AddLabel( ImDrawList *list, const ImVec2 &c, float diameter, ImU32 color, const char *label, int transform )
+{
+	ImFont *font = ImGui::GetFont();
+	float fontSize = diameter * 0.32f;
+	ImVec2 textSize, pos;
+	int vtx0;
+
+	if ( fontSize < 1.0f ) fontSize = 1.0f;
+
+	textSize = font->CalcTextSizeA( fontSize, FLT_MAX, 0.0f, label );
+	pos = ImVec2( c.x - textSize.x * 0.5f, c.y - textSize.y * 0.5f );
+
+	vtx0 = list->VtxBuffer.Size;
+	list->AddText( font, fontSize, pos, color, label );
+
+	if ( transform == 0 )
+	{
+		return;
+	}
+	for ( int i = vtx0; i < list->VtxBuffer.Size; i++ )
+	{
+		ImDrawVert &v = list->VtxBuffer[i];
+		float rx, ry;
+
+		Aurora_TouchUI_RotateOffset( v.pos.x - c.x, v.pos.y - c.y, transform, &rx, &ry );
+		v.pos.x = c.x + rx;
+		v.pos.y = c.y + ry;
+	}
+}
+
+/*
+====================
 Aurora_TouchUI_Build
 ====================
 */
@@ -289,7 +345,14 @@ static void Aurora_TouchUI_Build( ImDrawList *list, const AuroraTouchDrawFrame *
 
 		list->AddCircleFilled( c, r, fill );
 		list->AddCircle( c, r, edge, 0, ring );
-		Aurora_TouchIcon( list, b.icon, c, r * 0.6f, content, stroke, frame->transform );
+		if ( b.label )
+		{
+			Aurora_TouchUI_AddLabel( list, c, r * 2.0f, content, b.label, frame->transform );
+		}
+		else
+		{
+			Aurora_TouchIcon( list, b.icon, c, r * 0.6f, content, stroke, frame->transform );
+		}
 	}
 
 	if ( frame->stick )

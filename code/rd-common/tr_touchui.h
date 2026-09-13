@@ -58,7 +58,12 @@ along with OpenJK; if not, see <http://www.gnu.org/licenses/>.
 typedef struct {
 	float				x, y;			// window px, circle centre
 	float				radius;			// window px
-	auroraTouchIcon_t	icon;
+	auroraTouchIcon_t	icon;			// ignored by the renderer when label != NULL
+	const char			*label;			// NULL: draw `icon` (procedural glyph), as before.
+										// Non-NULL: draw this text, centred, instead - a
+										// static string literal (e.g. "SAVE"/"LOAD"/"SKIP"),
+										// so the pointer stays valid forever with no lifetime
+										// tie to any per-frame buffer (port task B-003).
 	int					pressed;		// 1 while a finger holds it (or it is latched)
 } auroraTouchButton_t;
 

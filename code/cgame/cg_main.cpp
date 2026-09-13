@@ -2184,6 +2184,10 @@ Called before every level change or subsystem restart
 void CG_Shutdown( void )
 {
 	in_camera = false;
+	// Aurora touch-UI bridge (port task B-003, see CGCam_Enable/Disable in
+	// cg_camera.cpp) - safety net so a level change mid-cutscene can't
+	// leave the client thinking a camera cutscene is still active.
+	cgi_Cvar_Set( "cg_inCameraCutscene", "0" );
 	FX_Free();
 }
 

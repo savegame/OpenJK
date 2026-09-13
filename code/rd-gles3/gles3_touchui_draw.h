@@ -53,7 +53,14 @@ along with OpenJK; if not, see <http://www.gnu.org/licenses/>.
 
 typedef struct {
 	float				x, y, radius;	// window px
-	auroraTouchIcon_t	icon;
+	auroraTouchIcon_t	icon;			// ignored when label != NULL
+	const char			*label;			// NULL: procedural icon glyph (as before). Non-NULL:
+										// centred text instead (SAVE/LOAD/SKIP, port task B-003)
+										// - see Aurora_TouchUI_AddLabel in the .cpp for how this
+										// still gets the same per-orientation rotation treatment
+										// as icon shapes (rotating the already-laid-out glyph
+										// quads about the button centre, not the glyphs' own
+										// baked pixels).
 	int					pressed;
 } AuroraTouchButtonDraw;
 

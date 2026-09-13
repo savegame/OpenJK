@@ -94,6 +94,7 @@ void Aurora_TouchUI_Draw( void )
 		frame.buttons[i].y       = aurora_touchOverlay.buttons[i].y;
 		frame.buttons[i].radius  = aurora_touchOverlay.buttons[i].radius;
 		frame.buttons[i].icon    = aurora_touchOverlay.buttons[i].icon;
+		frame.buttons[i].label   = aurora_touchOverlay.buttons[i].label;
 		frame.buttons[i].pressed = aurora_touchOverlay.buttons[i].pressed;
 	}
 
