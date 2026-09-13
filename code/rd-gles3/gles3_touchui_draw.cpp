@@ -275,6 +275,38 @@ static void Aurora_TouchIcon( ImDrawList *list, auroraTouchIcon_t icon, const Im
 			break;
 		}
 
+		case AURORA_TOUCH_ICON_ROLL:
+		{
+			// A partial circular arc with an arrowhead at its leading end -
+			// reads as "tumble", distinct from CROUCH's straight
+			// arrow-onto-floor. PathArcTo/PathStroke build the arc directly
+			// in absolute (window-space) angles, so unlike every other
+			// shape in this switch (which routes local offsets through
+			// Local::P/V before adding them to `c`) the arc's OWN start/end
+			// angles are rotated by a quarter-turn per `transform` instead -
+			// equivalent effect (transform is always a multiple of 90
+			// degrees here), just applied to the angle parameters rather
+			// than to emitted points, since PathArcTo has no "local offset"
+			// form to route through Local:: at all.
+			static const float angleOffset[4] = { 0.0f, -(float)M_PI * 0.5f, (float)M_PI, (float)M_PI * 0.5f };
+			const float off = angleOffset[transform & 3];
+			const float startAngle = -0.35f * (float)M_PI + off;
+			const float endAngle = 1.15f * (float)M_PI + off;
+			const float r = s * 0.65f;
+
+			list->PathArcTo( c, r, startAngle, endAngle, 16 );
+			list->PathStroke( color, ImDrawFlags_None, thickness );
+
+			{
+				const float ang = endAngle;
+				const ImVec2 tip( c.x + cosf( ang ) * r, c.y + sinf( ang ) * r );
+				const ImVec2 dir( -sinf( ang ), cosf( ang ) );
+
+				Aurora_TouchArrowHead( list, tip, dir, s * 0.35f, color, thickness );
+			}
+			break;
+		}
+
 		default:
 			break;
 	}

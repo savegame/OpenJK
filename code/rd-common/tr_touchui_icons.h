@@ -43,6 +43,9 @@ typedef enum {
 	AURORA_TOUCH_ICON_FORCE,		// radiating rays - use current force power
 	AURORA_TOUCH_ICON_FORCE_PREV,	// chevron pointing left - forceprev
 	AURORA_TOUCH_ICON_FORCE_NEXT,	// chevron pointing right - forcenext
+	AURORA_TOUCH_ICON_ROLL,		// partial circular arc with an arrowhead -
+									// tumble/roll (distinct from CROUCH's
+									// straight arrow-onto-floor)
 
 	AURORA_TOUCH_ICON_COUNT
 } auroraTouchIcon_t;

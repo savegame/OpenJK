@@ -93,6 +93,8 @@ typedef enum {
 	TB_FORCE_PREV,	// bottom centre, one-shot - forceprev
 	TB_FORCE_USE,	// bottom centre, held like fire - +useforce/-useforce
 	TB_FORCE_NEXT,	// bottom centre, one-shot - forcenext
+	TB_ROLL,		// held like crouch, own +movedown/-movedown key id -
+					// see touchButtons[]'s comment on TB_ROLL
 	TB_COUNT
 } touchButtonIndex_t;
 
@@ -173,6 +175,33 @@ static touchButton_t touchButtons[TB_COUNT] = {
 	{ "forceprev\n",  NULL,            AURORA_TOUCH_ICON_FORCE_PREV, NULL, 0, 1 },
 	{ "+useforce\n",  "-useforce\n",   AURORA_TOUCH_ICON_FORCE,      NULL, 0, 0 },
 	{ "forcenext\n",  NULL,            AURORA_TOUCH_ICON_FORCE_NEXT, NULL, 0, 1 },
+
+	// Roll/tumble - touch-UI discoverability, not a new engine mechanic:
+	// mechanically a roll is just running (stick at run deflection, not
+	// walking) + crouch pressed while grounded and not already rolling
+	// (bg_pmove.cpp's PM_TryRoll(), called from PM_Footsteps() whenever
+	// PMF_DUCKED gets set on a PM_RunningAnim - bg_pmove.cpp:8382-8394);
+	// there is no separate "roll" console command anywhere in the engine,
+	// only that same ducked-while-running state CROUCH already drives.
+	// CROUCH itself is deliberately left untouched: it is already a
+	// held (non-latch) button as of the user's own commit 27b8a32 (it
+	// used to latch at the overlay's first cut, port stage "Тач-UI"), so
+	// it already does exactly what rolling needs - the premise that it
+	// still latches (and blocks rolling) is stale. This button exists
+	// only to make the move discoverable without already knowing the
+	// keyboard trick, as a second, distinctly-iconed way to reach the
+	// same ducked state - which must not fight CROUCH's own hold if a
+	// player somehow presses both. IN_KeyUp (cl_input.cpp:199-212) treats
+	// a keyless "-movedown" (what every other +/-command button here
+	// sends) as "typed at the console, unstick everything": it
+	// unconditionally clears BOTH of the shared kbutton_t's down[] slots,
+	// which would let this button's release cancel CROUCH's hold (or
+	// vice versa) if it used the identical bare command. Passing an
+	// explicit fake key id ("+movedown 2"/"-movedown 2") instead makes
+	// IN_KeyDown/IN_KeyUp track this button in its own down[] slot
+	// (cl_input.cpp:163-197's down[0]/down[1] reference counting), so
+	// releasing either button only ever clears its own slot.
+	{ "+movedown 2\n", "-movedown 2\n", AURORA_TOUCH_ICON_ROLL, NULL, 0, 0 },
 };
 
 // ---------------------------------------------------------------------------
@@ -519,6 +548,12 @@ static void Aurora_TouchUI_Layout( void )
 	touchButtons[TB_FORCE_NEXT].radiusMm = smallMm * 0.5f;
 	touchButtons[TB_FORCE_NEXT].cx = touchButtons[TB_FORCE_USE].cx + smallMm + gapMm;
 	touchButtons[TB_FORCE_NEXT].cy = touchButtons[TB_FORCE_USE].cy;
+
+	// Roll (see touchButtons[]'s TB_ROLL comment) - one button-width to
+	// the left of CROUCH, same row, so the two read as related controls.
+	touchButtons[TB_ROLL].radiusMm = smallMm * 0.5f;
+	touchButtons[TB_ROLL].cx = touchButtons[TB_CROUCH].cx - gapMm - smallMm;
+	touchButtons[TB_ROLL].cy = touchButtons[TB_CROUCH].cy;
 }
 
 /*
