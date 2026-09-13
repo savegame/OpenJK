@@ -34,8 +34,18 @@ along with OpenJK; if not, see <http://www.gnu.org/licenses/>.
 // ever passes the plain-old-data below across.
 //
 // Coordinates here are WINDOW pixels already (see tr_touchui.h's comment) -
-// this file does no rotation math of its own, only draws circles where it
-// is told to.
+// button/stick CENTRES are already transformed into window space by the
+// client, so this file does no positional rotation math of its own. Icon
+// SHAPES are a different matter: an icon is drawn as a handful of offsets
+// from its own centre (e.g. an arrow's "up" direction), and those offsets
+// are defined in the same visual/landscape space the client lays the
+// button out in - NOT window space, which is rotated relative to it
+// whenever `transform` != 0 (see research/touch_ui_research.md п.8, and
+// sdl_touchui.cpp's Aurora_TouchUI_WindowToVisual/VisualToWindow for the
+// position side of the same rotation). `transform` below is that same
+// WL_OUTPUT_TRANSFORM_* value (0/1/2/3), passed through unchanged so this
+// file can rotate each icon's local offsets the same way before drawing -
+// see Aurora_TouchUI_RotateOffset in the .cpp.
 
 #include "../rd-common/tr_touchui_icons.h"
 
@@ -51,6 +61,7 @@ typedef struct {
 	int		windowWidth, windowHeight;
 	float	alpha;
 	float	pixelsPerMm;
+	int		transform;	// WL_OUTPUT_TRANSFORM_* (0/1/2/3) - rotates icon shapes only, positions are already in window space
 
 	int						numButtons;
 	AuroraTouchButtonDraw	buttons[AURORA_TOUCH_DRAW_MAX_BUTTONS];

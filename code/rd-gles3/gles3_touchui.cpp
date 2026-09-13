@@ -81,6 +81,7 @@ void Aurora_TouchUI_Draw( void )
 	frame.windowHeight = aurora_touchOverlay.windowHeight;
 	frame.alpha        = aurora_touchOverlay.alpha;
 	frame.pixelsPerMm  = aurora_touchOverlay.pixelsPerMm;
+	frame.transform    = aurora_touchOverlay.transform;
 
 	frame.numButtons = aurora_touchOverlay.numButtons;
 	if ( frame.numButtons > AURORA_TOUCH_DRAW_MAX_BUTTONS )

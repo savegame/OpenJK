@@ -66,6 +66,7 @@ typedef struct {
 	int		windowWidth, windowHeight;	// window size this frame was laid out for
 	float	pixelsPerMm;				// for the renderer's stroke-thickness scaling
 	float	alpha;						// 0..1 overlay opacity (cl_touchUIAlpha)
+	int		transform;					// WL_OUTPUT_TRANSFORM_* (0/1/2/3) - see gles3_touchui_draw.h's comment: rotates icon shapes, positions are already window-space
 
 	int					numButtons;
 	auroraTouchButton_t	buttons[AURORA_TOUCH_MAX_BUTTONS];

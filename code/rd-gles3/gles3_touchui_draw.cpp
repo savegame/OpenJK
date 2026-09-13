@@ -101,10 +101,38 @@ static ImU32 Aurora_TouchColor( int r, int g, int b, float alpha )
 
 /*
 ====================
+Aurora_TouchUI_RotateOffset
+
+Icon shapes are defined as offsets from their own centre in VISUAL/
+landscape local axes (e.g. an arrow's "up" is (0,-1)) - see
+gles3_touchui_draw.h's comment. `transform` is the same WL_OUTPUT_TRANSFORM_*
+value the client's Aurora_TouchUI_VisualToWindow (sdl_touchui.cpp) already
+uses to turn a button's CENTRE point from visual into window space; this is
+the exact same table with the translation stripped out (a pure direction
+needs no re-centring, only the rotation) - see
+research/touch_ui_research.md п.8 for the shared derivation, and
+sdl_touchui.cpp's own copy of this table for the position side.
+====================
+*/
+static void Aurora_TouchUI_RotateOffset( float dx, float dy, int transform, float *rx, float *ry )
+{
+	switch ( transform )
+	{
+		default:
+		case 0: *rx =  dx; *ry =  dy; break;
+		case 1: *rx =  dy; *ry = -dx; break;
+		case 2: *rx = -dx; *ry = -dy; break;
+		case 3: *rx = -dy; *ry =  dx; break;
+	}
+}
+
+/*
+====================
 Aurora_TouchArrowHead
 
-A chevron with its tip at "tip", pointing along dir (unit length) - same
-construction as the reference port's RB_TouchArrowHead.
+A chevron with its tip at "tip", pointing along dir (unit length, already
+rotated into window space by the caller) - same construction as the
+reference port's RB_TouchArrowHead.
 ====================
 */
 static void Aurora_TouchArrowHead( ImDrawList *list, const ImVec2 &tip, const ImVec2 &dir, float size, ImU32 color, float thickness )
@@ -125,19 +153,43 @@ static void Aurora_TouchArrowHead( ImDrawList *list, const ImVec2 &tip, const Im
 Aurora_TouchIcon
 
 Every icon is a handful of lines/circles around centre c, s is roughly the
-half-size of the icon. No image assets anywhere.
+half-size of the icon. No image assets anywhere. Every local offset is
+routed through Aurora_TouchUI_RotateOffset (via the P() helper below) before
+being added to c, so an icon drawn as "pointing up" in visual/landscape
+terms still points up on screen at any of the 4 physical orientations -
+symmetric shapes (Fire's crosshair, Altfire's X, Use's rings) are
+unaffected by this (a circle/4-fold symbol looks the same rotated by a
+multiple of 90 degrees), asymmetric ones (Menu's bars, Jump's and Crouch's
+arrows) are the ones this actually fixes.
 ====================
 */
-static void Aurora_TouchIcon( ImDrawList *list, auroraTouchIcon_t icon, const ImVec2 &c, float s, ImU32 color, float thickness )
+static void Aurora_TouchIcon( ImDrawList *list, auroraTouchIcon_t icon, const ImVec2 &c, float s, ImU32 color, float thickness, int transform )
 {
+	// Local helper: c + RotateOffset(dx,dy) - every icon case below builds
+	// its points through this instead of raw "c.x + dx, c.y + dy".
+	struct Local {
+		static ImVec2 P( const ImVec2 &c, float dx, float dy, int t )
+		{
+			float rx, ry;
+			Aurora_TouchUI_RotateOffset( dx, dy, t, &rx, &ry );
+			return ImVec2( c.x + rx, c.y + ry );
+		}
+		static ImVec2 V( float dx, float dy, int t )
+		{
+			float rx, ry;
+			Aurora_TouchUI_RotateOffset( dx, dy, t, &rx, &ry );
+			return ImVec2( rx, ry );
+		}
+	};
+
 	switch ( icon )
 	{
 		case AURORA_TOUCH_ICON_MENU:
 		{
 			for ( int i = -1; i <= 1; i++ )
 			{
-				const float y = c.y + i * s * 0.55f;
-				list->AddLine( ImVec2( c.x - s * 0.75f, y ), ImVec2( c.x + s * 0.75f, y ), color, thickness );
+				const float dy = i * s * 0.55f;
+				list->AddLine( Local::P( c, -s * 0.75f, dy, transform ), Local::P( c, s * 0.75f, dy, transform ), color, thickness );
 			}
 			break;
 		}
@@ -150,8 +202,8 @@ static void Aurora_TouchIcon( ImDrawList *list, auroraTouchIcon_t icon, const Im
 			{
 				const float dx = ( i == 0 ) ? 1.0f : ( i == 1 ) ? -1.0f : 0.0f;
 				const float dy = ( i == 2 ) ? 1.0f : ( i == 3 ) ? -1.0f : 0.0f;
-				list->AddLine( ImVec2( c.x + dx * s * 0.3f, c.y + dy * s * 0.3f ),
-					ImVec2( c.x + dx * s * 1.05f, c.y + dy * s * 1.05f ), color, thickness );
+				list->AddLine( Local::P( c, dx * s * 0.3f, dy * s * 0.3f, transform ),
+					Local::P( c, dx * s * 1.05f, dy * s * 1.05f, transform ), color, thickness );
 			}
 			break;
 		}
@@ -160,26 +212,26 @@ static void Aurora_TouchIcon( ImDrawList *list, auroraTouchIcon_t icon, const Im
 		{
 			// a crosshair's circle with a cross inside, to read as "the other button"
 			list->AddCircle( c, s * 0.6f, color, 0, thickness );
-			list->AddLine( ImVec2( c.x - s * 0.45f, c.y - s * 0.45f ), ImVec2( c.x + s * 0.45f, c.y + s * 0.45f ), color, thickness );
-			list->AddLine( ImVec2( c.x - s * 0.45f, c.y + s * 0.45f ), ImVec2( c.x + s * 0.45f, c.y - s * 0.45f ), color, thickness );
+			list->AddLine( Local::P( c, -s * 0.45f, -s * 0.45f, transform ), Local::P( c, s * 0.45f, s * 0.45f, transform ), color, thickness );
+			list->AddLine( Local::P( c, -s * 0.45f, s * 0.45f, transform ), Local::P( c, s * 0.45f, -s * 0.45f, transform ), color, thickness );
 			break;
 		}
 
 		case AURORA_TOUCH_ICON_JUMP:
 		{
-			const ImVec2 tip( c.x, c.y - s * 0.9f );
-			list->AddLine( ImVec2( c.x, c.y + s * 0.9f ), tip, color, thickness );
-			Aurora_TouchArrowHead( list, tip, ImVec2( 0.0f, -1.0f ), s * 0.6f, color, thickness );
+			const ImVec2 tip = Local::P( c, 0.0f, -s * 0.9f, transform );
+			list->AddLine( Local::P( c, 0.0f, s * 0.9f, transform ), tip, color, thickness );
+			Aurora_TouchArrowHead( list, tip, Local::V( 0.0f, -1.0f, transform ), s * 0.6f, color, thickness );
 			break;
 		}
 
 		case AURORA_TOUCH_ICON_CROUCH:
 		{
 			// an arrow down onto the floor
-			const ImVec2 tip( c.x, c.y + s * 0.45f );
-			list->AddLine( ImVec2( c.x, c.y - s * 0.95f ), tip, color, thickness );
-			Aurora_TouchArrowHead( list, tip, ImVec2( 0.0f, 1.0f ), s * 0.55f, color, thickness );
-			list->AddLine( ImVec2( c.x - s * 0.9f, c.y + s * 0.95f ), ImVec2( c.x + s * 0.9f, c.y + s * 0.95f ), color, thickness );
+			const ImVec2 tip = Local::P( c, 0.0f, s * 0.45f, transform );
+			list->AddLine( Local::P( c, 0.0f, -s * 0.95f, transform ), tip, color, thickness );
+			Aurora_TouchArrowHead( list, tip, Local::V( 0.0f, 1.0f, transform ), s * 0.55f, color, thickness );
+			list->AddLine( Local::P( c, -s * 0.9f, s * 0.95f, transform ), Local::P( c, s * 0.9f, s * 0.95f, transform ), color, thickness );
 			break;
 		}
 
@@ -200,8 +252,8 @@ static void Aurora_TouchIcon( ImDrawList *list, auroraTouchIcon_t icon, const Im
 				const float a = (float)M_PI * 0.25f * (float)i;
 				const float x = cosf( a );
 				const float y = sinf( a );
-				list->AddLine( ImVec2( c.x + x * s * 0.5f, c.y + y * s * 0.5f ),
-					ImVec2( c.x + x * s * 0.95f, c.y + y * s * 0.95f ), color, thickness );
+				list->AddLine( Local::P( c, x * s * 0.5f, y * s * 0.5f, transform ),
+					Local::P( c, x * s * 0.95f, y * s * 0.95f, transform ), color, thickness );
 			}
 			break;
 		}
@@ -237,7 +289,7 @@ static void Aurora_TouchUI_Build( ImDrawList *list, const AuroraTouchDrawFrame *
 
 		list->AddCircleFilled( c, r, fill );
 		list->AddCircle( c, r, edge, 0, ring );
-		Aurora_TouchIcon( list, b.icon, c, r * 0.6f, content, stroke );
+		Aurora_TouchIcon( list, b.icon, c, r * 0.6f, content, stroke, frame->transform );
 	}
 
 	if ( frame->stick )

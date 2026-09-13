@@ -101,6 +101,13 @@ typedef struct {
 	int			down;		// action currently applied (for non-latch buttons)
 	int			latched;	// latch currently on (for latch buttons)
 
+	// Fix (user report): a finger holding an action button must not block
+	// camera look - it keeps driving the pad with its own delta, exactly
+	// like touchPad, while the button stays held. Not used by the menu
+	// button (downCmd == NULL).
+	float		lookLastX, lookLastY;	// WINDOW px, last processed point for this finger
+	float		lookRemX, lookRemY;		// sub-pixel carry, mirrors touchPad.remX/Y
+
 	// layout, VISUAL mm (see Aurora_TouchUI_Layout) - centre + radius
 	float		cx, cy, radiusMm;
 } touchButton_t;
@@ -527,34 +534,45 @@ static void Aurora_TouchUI_RotateDelta( float dx, float dy, float *outx, float *
 	}
 }
 
-static void Aurora_TouchUI_PadMove( float windowX, float windowY )
+// Shared by the camera pad (touchPad) and by any action button held while
+// dragging (user report: a button must not block camera look - the finger
+// that pressed it keeps turning the camera exactly like the pad, while the
+// button itself stays held/latched). lastX/lastY/remX/remY are the
+// caller's own per-finger state (touchPad's fields, or a touchButton_t's
+// lookLastX/lookLastY/lookRemX/lookRemY).
+static void Aurora_TouchUI_LookMove( float windowX, float windowY, float *lastX, float *lastY, float *remX, float *remY )
 {
 	const float mmPerPx = 1.0f / touchPixelsPerMm;
 	const float unitsPerMm = cl_touchUILookSpeed->value;
-	float dxWin = windowX - touchPad.lastX;
-	float dyWin = windowY - touchPad.lastY;
+	float dxWin = windowX - *lastX;
+	float dyWin = windowY - *lastY;
 	float dxUnits, dyUnits, tdx, tdy;
 	int idx, idy;
 
-	touchPad.lastX = windowX;
-	touchPad.lastY = windowY;
+	*lastX = windowX;
+	*lastY = windowY;
 
 	dxUnits = dxWin * mmPerPx * unitsPerMm;
 	dyUnits = dyWin * mmPerPx * unitsPerMm;
 
 	Aurora_TouchUI_RotateDelta( dxUnits, dyUnits, &tdx, &tdy );
 
-	touchPad.remX += tdx;
-	touchPad.remY += tdy;
-	idx = (int)touchPad.remX;
-	idy = (int)touchPad.remY;
-	touchPad.remX -= (float)idx;
-	touchPad.remY -= (float)idy;
+	*remX += tdx;
+	*remY += tdy;
+	idx = (int)*remX;
+	idy = (int)*remY;
+	*remX -= (float)idx;
+	*remY -= (float)idy;
 
 	if ( idx || idy )
 	{
 		Sys_QueEvent( 0, SE_MOUSE, idx, idy, 0, NULL );
 	}
+}
+
+static void Aurora_TouchUI_PadMove( float windowX, float windowY )
+{
+	Aurora_TouchUI_LookMove( windowX, windowY, &touchPad.lastX, &touchPad.lastY, &touchPad.remX, &touchPad.remY );
 }
 
 /*
@@ -627,6 +645,16 @@ void Aurora_TouchUI_FingerEvent( const SDL_Event *ev )
 			if ( dx * dx + dy * dy > b->radiusMm * b->radiusMm ) continue;
 
 			Aurora_TouchUI_PressButton( b, finger.fingerId );
+
+			// Fix (user report): the same finger also drives the camera
+			// while it holds an action button - never for the menu button
+			// (downCmd == NULL, sends Escape and nothing else).
+			if ( b->downCmd )
+			{
+				b->lookLastX = finger.x * (float)windowW;
+				b->lookLastY = finger.y * (float)windowH;
+				b->lookRemX = b->lookRemY = 0.0f;
+			}
 			return;
 		}
 
@@ -682,8 +710,21 @@ void Aurora_TouchUI_FingerEvent( const SDL_Event *ev )
 			Aurora_TouchUI_PadMove( finger.x * (float)windowW, finger.y * (float)windowH );
 			return;
 		}
-		// buttons don't track finger motion (no TBF_LOOK-while-held in this
-		// port's action set) - nothing else to do.
+
+		// A finger holding an action button (fire/altfire/jump/crouch/use)
+		// keeps turning the camera as it slides - the button stays held
+		// regardless (see Aurora_TouchUI_ReleaseButton on FINGERUP).
+		for ( i = 0; i < TB_COUNT; i++ )
+		{
+			touchButton_t *b = &touchButtons[i];
+
+			if ( b->held && b->finger == finger.fingerId && b->downCmd )
+			{
+				Aurora_TouchUI_LookMove( finger.x * (float)windowW, finger.y * (float)windowH,
+					&b->lookLastX, &b->lookLastY, &b->lookRemX, &b->lookRemY );
+				return;
+			}
+		}
 		return;
 	}
 
@@ -800,6 +841,7 @@ void Aurora_TouchUI_Frame( void )
 	overlay.windowHeight = windowH;
 	overlay.pixelsPerMm = touchPixelsPerMm;
 	overlay.alpha = cl_touchUIAlpha->value;
+	overlay.transform = Aurora_TouchUI_GetTransform();
 
 	overlay.numButtons = TB_COUNT;
 	if ( overlay.numButtons > AURORA_TOUCH_MAX_BUTTONS )
