@@ -49,7 +49,7 @@ along with OpenJK; if not, see <http://www.gnu.org/licenses/>.
 
 #include "../rd-common/tr_touchui_icons.h"
 
-#define AURORA_TOUCH_DRAW_MAX_BUTTONS 8
+#define AURORA_TOUCH_DRAW_MAX_BUTTONS 12
 
 typedef struct {
 	float				x, y, radius;	// window px - radius used when label == NULL (icon circle)
