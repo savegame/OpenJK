@@ -1004,6 +1004,23 @@ void Aurora_TouchUI_FingerEvent( const SDL_Event *ev )
 	{
 		touchPad.held = 0;
 	}
+	// Bug fix: this generic "normal gameplay" FINGERUP path was the only
+	// one of the three per-frame states (see Aurora_TouchUI_Frame) that
+	// never checked touchSkip at all - a FINGERUP delivered here (i.e.
+	// while Aurora_TouchUI_CinematicSkippable() is momentarily false, the
+	// gap between a camera cutscene ending and a following ROQ video
+	// actually starting counts) left touchSkip.held stuck at 1 forever.
+	// Symptom matched the user report exactly: SKIP visually stayed
+	// "pressed" and Aurora_TouchUI_FingerEvent's `!touchSkip.held` guard
+	// then silently refused every later tap, so the very next cinematic
+	// (typically the video the camera cutscene cuts to) could no longer
+	// be skipped at all. See also the frame-level safety net in
+	// Aurora_TouchUI_Frame(), which additionally clears this regardless
+	// of which finger last touched it.
+	if ( touchSkip.held && touchSkip.finger == finger.fingerId )
+	{
+		touchSkip.held = 0;
+	}
 }
 
 void Aurora_TouchUI_NotePhysicalInput( void )
@@ -1096,6 +1113,21 @@ void Aurora_TouchUI_Frame( void )
 	Aurora_TouchUI_Layout();
 	windowW = touchLayoutWindowW;
 	windowH = touchLayoutWindowH;
+
+	// Bug fix (button-stuck report): force-clear touchSkip the moment
+	// neither cinematic kind is active any more, independent of whether
+	// its owning finger's FINGERUP was ever seen by
+	// Aurora_TouchUI_FingerEvent - see the fix there for the exact gap
+	// this closes (and why relying on FINGERUP delivery alone was not
+	// enough: cls.state/CL_IsRunningInGameCinematic()/
+	// cg_inCameraCutscene can all flip within a single frame, faster than
+	// any finger event). Runs every frame, so a stale flag cannot survive
+	// past the first frame the cinematic is truly over, whichever finger
+	// last held it.
+	if ( touchSkip.held && !Aurora_TouchUI_CinematicActive() )
+	{
+		touchSkip.held = 0;
+	}
 
 	if ( Aurora_TouchUI_CinematicSkippable() && Aurora_TouchUI_Enabled() )
 	{
