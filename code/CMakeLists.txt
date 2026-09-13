@@ -374,6 +374,10 @@ if(BuildSPEngine OR BuildJK2SPEngine)
 		# drawing lives in code/rd-gles3/gles3_touchui*.cpp.
 		"${SharedDir}/sdl/sdl_touchui.h"
 		"${SharedDir}/sdl/sdl_touchui.cpp"
+		# Physical gamepad support (SDL_GameController) - default
+		# dual-stick layout, a module of its own next to sdl_touchui.
+		"${SharedDir}/sdl/sdl_gamepad.h"
+		"${SharedDir}/sdl/sdl_gamepad.cpp"
 		)
 
 	if(WIN32)

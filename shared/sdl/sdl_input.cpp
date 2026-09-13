@@ -36,6 +36,10 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // Port stage "Тач-UI (виртуальный геймпад)" - the gameplay overlay module,
 // a separate translation unit; see sdl_touchui.h for the split.
 #include "sdl_touchui.h"
+
+// Physical gamepad support (SDL_GameController) - default dual-stick
+// layout, a separate translation unit; see sdl_gamepad.h for the design.
+#include "sdl_gamepad.h"
 #endif
 
 static cvar_t *in_keyboardDebug     = NULL;
@@ -1089,6 +1093,11 @@ void IN_Init( void *windowData )
 	}
 
 	Aurora_TouchUI_Init();
+
+	// Port task: physical gamepad support - opens the first SDL-recognised
+	// controller already plugged in, if any; further hotplugs are caught
+	// by the SDL_CONTROLLERDEVICEADDED/REMOVED case in IN_ProcessEvents.
+	Aurora_Gamepad_Init();
 #endif
 
 	Com_DPrintf( "------------------------------------\n" );
@@ -1542,6 +1551,16 @@ static void IN_ProcessEvents( void )
 			case SDL_JOYDEVICEREMOVED:
 				Aurora_TouchUI_NoteJoystickChange();
 				break;
+
+			// Port task: physical gamepad support. SDL_GameControllerOpen
+			// opens the same underlying joystick device the case above
+			// already sees, so the touch-ui hide/show logic needs no
+			// changes - only the gamepad module itself needs to know, to
+			// open/close its SDL_GameController handle.
+			case SDL_CONTROLLERDEVICEADDED:
+			case SDL_CONTROLLERDEVICEREMOVED:
+				Aurora_Gamepad_Event( &e );
+				break;
 #endif
 
 			case SDL_QUIT:
@@ -1885,6 +1904,10 @@ void IN_Frame (void) {
 	// ship the current overlay to the renderer - after IN_ProcessEvents so
 	// this frame's finger/mouse/key events are already accounted for.
 	Aurora_TouchUI_Frame();
+
+	// Port task: physical gamepad support - poll sticks/triggers/buttons
+	// and dispatch this frame's actions.
+	Aurora_Gamepad_Frame();
 #endif
 }
 
@@ -1912,6 +1935,13 @@ void IN_Shutdown( void ) {
 
 	IN_DeactivateMouse( );
 	mouseAvailable = qfalse;
+
+#ifdef AURORA
+	// Close the game controller (and its SDL_INIT_GAMECONTROLLER subsystem
+	// ref) before IN_ShutdownJoystick() below tears down SDL_INIT_JOYSTICK
+	// underneath it.
+	Aurora_Gamepad_Shutdown();
+#endif
 
 	IN_ShutdownJoystick( );
 
