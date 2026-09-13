@@ -259,6 +259,22 @@ static void Aurora_TouchIcon( ImDrawList *list, auroraTouchIcon_t icon, const Im
 			break;
 		}
 
+		case AURORA_TOUCH_ICON_FORCE_PREV:
+		{
+			// a chevron/arrowhead alone (no stem) pointing left - reads as
+			// a "previous" control, distinct from JUMP's full arrow+line.
+			const ImVec2 tip = Local::P( c, -s * 0.5f, 0.0f, transform );
+			Aurora_TouchArrowHead( list, tip, Local::V( -1.0f, 0.0f, transform ), s * 0.9f, color, thickness );
+			break;
+		}
+
+		case AURORA_TOUCH_ICON_FORCE_NEXT:
+		{
+			const ImVec2 tip = Local::P( c, s * 0.5f, 0.0f, transform );
+			Aurora_TouchArrowHead( list, tip, Local::V( 1.0f, 0.0f, transform ), s * 0.9f, color, thickness );
+			break;
+		}
+
 		default:
 			break;
 	}

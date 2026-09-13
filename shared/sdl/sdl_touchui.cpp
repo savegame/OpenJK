@@ -90,6 +90,9 @@ typedef enum {
 	TB_USE,
 	TB_SAVE,
 	TB_LOAD,
+	TB_FORCE_PREV,	// bottom centre, one-shot - forceprev
+	TB_FORCE_USE,	// bottom centre, held like fire - +useforce/-useforce
+	TB_FORCE_NEXT,	// bottom centre, one-shot - forcenext
 	TB_COUNT
 } touchButtonIndex_t;
 
@@ -140,6 +143,36 @@ static touchButton_t touchButtons[TB_COUNT] = {
 	// vice versa. One-shot: no held state, no -command.
 	{ "save quick\n", NULL,            AURORA_TOUCH_ICON_MENU,    "SAVE", 0, 1 },
 	{ "load quick\n", NULL,            AURORA_TOUCH_ICON_MENU,    "LOAD", 0, 1 },
+
+	// Force powers (port task B-002): the engine has no single "use force"
+	// key of its own - forceprev/forcenext (stateless console commands,
+	// CG_PrevForcePower_f/CG_NextForcePower_f, cg_consolecmds.cpp:229-230)
+	// cycle which power is selected, +useforce/-useforce
+	// (IN_Button2Down/Up, cl_input.cpp:1090-1091) activates whichever one
+	// currently is, exactly like +attack does for the weapon. Prev/next
+	// are one-shot taps for the same reason SAVE/LOAD are above (a
+	// stateless command, nothing meaningful to hold); use is a normal
+	// held button, so it drains a charged-hold power (heal, speed, grip,
+	// ...) for exactly as long as the finger stays down, same as a real
+	// bound key would.
+	//
+	// Indicator: cg.forcepowerSelect (code/cgame/cg_local.h) is the
+	// currently-selected power, but it lives in the SPGame DLL, not this
+	// executable (research/touch_ui_research.md п.5's dlopen boundary) -
+	// bridging it out would need a new cvar (same pattern as
+	// cg_inCameraCutscene below) AND a way to show it on a CIRCULAR
+	// button without turning it into a capsule, which the port's own
+	// rule keeps for action buttons (round stays round, only SAVE/LOAD/
+	// SKIP are capsules - see tr_touchui.h's comment: a capsule's
+	// width/height swap at 90/270, a circle's radius doesn't, which is
+	// why every OTHER action button in this array is a circle). Drawing
+	// per-power glyphs (15 of them, forcePowers_t, q_shared.h) or text
+	// inside a fixed-radius circle would need a new draw primitive this
+	// task's budget does not call for - left unindicated, as the task
+	// allows when a cheap option isn't available.
+	{ "forceprev\n",  NULL,            AURORA_TOUCH_ICON_FORCE_PREV, NULL, 0, 1 },
+	{ "+useforce\n",  "-useforce\n",   AURORA_TOUCH_ICON_FORCE,      NULL, 0, 0 },
+	{ "forcenext\n",  NULL,            AURORA_TOUCH_ICON_FORCE_NEXT, NULL, 0, 1 },
 };
 
 // ---------------------------------------------------------------------------
@@ -467,6 +500,25 @@ static void Aurora_TouchUI_Layout( void )
 	touchButtons[TB_USE].radiusMm = smallMm * 0.5f;
 	touchButtons[TB_USE].cx = touchButtons[TB_JUMP].cx;
 	touchButtons[TB_USE].cy = smallMm * 0.5f;
+
+	// Force prev/use/next (port task B-002): bottom centre, three small
+	// circles in a row - "use" in the middle (same size as the other
+	// primary held actions), flanked by the two one-shot cycle buttons.
+	// Its own row, below the stick/pad's usual working range and well
+	// clear of both the SAVE/LOAD row (top centre) and the fire cluster
+	// (right) at any reasonable screen size - see the layout comment atop
+	// this function for why edges stay clear (margin) the same way.
+	touchButtons[TB_FORCE_USE].radiusMm = smallMm * 0.5f;
+	touchButtons[TB_FORCE_USE].cx = visualWmm * 0.5f;
+	touchButtons[TB_FORCE_USE].cy = bottom - smallMm * 0.5f;
+
+	touchButtons[TB_FORCE_PREV].radiusMm = smallMm * 0.5f;
+	touchButtons[TB_FORCE_PREV].cx = touchButtons[TB_FORCE_USE].cx - smallMm - gapMm;
+	touchButtons[TB_FORCE_PREV].cy = touchButtons[TB_FORCE_USE].cy;
+
+	touchButtons[TB_FORCE_NEXT].radiusMm = smallMm * 0.5f;
+	touchButtons[TB_FORCE_NEXT].cx = touchButtons[TB_FORCE_USE].cx + smallMm + gapMm;
+	touchButtons[TB_FORCE_NEXT].cy = touchButtons[TB_FORCE_USE].cy;
 }
 
 /*
