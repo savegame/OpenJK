@@ -27,6 +27,12 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "sys/sys_local.h"
 #include "sdl_icon.h"
 
+#if defined( AURORA ) && !defined( DEDICATED )
+// Port stage "Лаунчер (imgui)" - see the window/context adoption branch in
+// GLimp_SetMode below.
+#include "launcher/launcher.h"
+#endif
+
 enum rserr_t
 {
 	RSERR_OK,
@@ -357,6 +363,60 @@ static rserr_t GLimp_SetMode(glconfig_t *glConfig, const windowDesc_t *windowDes
 		0xFF000000, 0x00FF0000, 0x0000FF00, 0x000000FF
 #endif
 		);
+
+#if defined( AURORA ) && !defined( DEDICATED )
+	// Port stage "Лаунчер (imgui)": the launcher (shared/launcher/
+	// launcher.cpp, run from shared/sys/sys_main.cpp before Com_Init) has
+	// already created the fullscreen window + GLES3 context the engine
+	// needs, with the same GL attribute set this function requests below
+	// (SetGLAttributesForEngine mirrors GLPROFILE_ES 3.0 / RGBA 8888 /
+	// DEPTH 24 / STENCIL 8 / doublebuffer), and hands them here via
+	// Launcher_GetWindow()/Launcher_GetGLContext(). AuroraOS' compositor
+	// kills the process the instant its window disappears, even for a
+	// single frame, so this - the very first GLimp_SetMode call at
+	// startup - must adopt that window instead of creating a second one.
+	// Only applies the first time (screen == NULL): a later vid_restart
+	// reusing an already-live `screen` never reaches here with a window
+	// still owned by the launcher (Launcher_ReleaseOwnership below runs
+	// exactly once).
+	if ( screen == NULL && windowDesc->api == GRAPHICS_API_OPENGL &&
+		Launcher_GetWindow() != NULL && Launcher_GetGLContext() != NULL )
+	{
+		screen          = (SDL_Window *)Launcher_GetWindow();
+		opengl_context  = (SDL_GLContext)Launcher_GetGLContext();
+
+		SDL_GetWindowSize( screen, &glConfig->vidWidth, &glConfig->vidHeight );
+		glConfig->isFullscreen = qtrue;
+		// Matches SetGLAttributesForEngine() in launcher.cpp exactly -
+		// nothing probes the real framebuffer here, the launcher already
+		// requested this combination and SDL_GL_CreateContext succeeded.
+		glConfig->colorBits   = 32;
+		glConfig->depthBits   = 24;
+		glConfig->stencilBits = 8;
+
+#ifndef MACOS_X
+		SDL_SetWindowIcon( screen, icon );
+#endif
+		SDL_FreeSurface( icon );
+
+		SDL_GL_MakeCurrent( screen, opengl_context );
+		if ( SDL_GL_SetSwapInterval( r_swapInterval->integer ) == -1 )
+		{
+			Com_DPrintf( "SDL_GL_SetSwapInterval failed: %s\n", SDL_GetError() );
+		}
+
+		// The engine now owns the window/context; the launcher must not
+		// free them on its own (would-be) shutdown path.
+		Launcher_ReleaseOwnership();
+
+		if ( !GLimp_DetectAvailableModes() )
+		{
+			return RSERR_UNKNOWN;
+		}
+
+		return RSERR_OK;
+	}
+#endif
 
 	// If a window exists, note its display index
 	if ( screen != NULL )

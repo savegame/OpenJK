@@ -32,6 +32,11 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "sys_public.h"
 #include "con_local.h"
 
+#if defined( AURORA ) && !defined( DEDICATED )
+// Port stage "Лаунчер (imgui)" (gameport/docs/imgui_launcher.md).
+#include "launcher/launcher.h"
+#endif
+
 static char binaryPath[ MAX_OSPATH ] = { 0 };
 static char installPath[ MAX_OSPATH ] = { 0 };
 
@@ -803,6 +808,53 @@ int main ( int argc, char* argv[] )
 
 		Q_strcat( commandLine, sizeof( commandLine ), " " );
 	}
+
+#if defined( AURORA ) && !defined( DEDICATED )
+	// Port stage "Лаунчер (imgui)": the proprietary game resources are not
+	// shipped in the package (gameport/docs/imgui_launcher.md) - ask the
+	// user where they installed the game before the engine does anything
+	// else. The launcher creates the SDL window + GLES3 context itself
+	// (SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN, same GL attributes
+	// GLimp_SetMode below requests) and keeps them alive across the
+	// hand-off: AuroraOS' compositor kills the process if its window ever
+	// disappears, even for a single frame, so there must never be a gap
+	// between the launcher's window and the engine's. shared/sdl/
+	// sdl_window.cpp's GLimp_SetMode adopts that window/context instead of
+	// creating its own when Launcher_GetWindow()/GetGLContext() are set.
+	if( Launcher_Run() == LAUNCHER_QUIT )
+		return 0;
+
+	// Hand the launcher's picks to the engine as "+set" tokens ahead of
+	// the real command line (so an explicit override on the real argv -
+	// e.g. a desktop file shortcut - still wins, since Cvar_Get() below
+	// keeps whatever a cvar was already set to). Two reasons this is NOT
+	// done via environment variables (gameport/docs/imgui_launcher.md
+	// shows env vars in its generic example):
+	//   1. fs_basepath (code/qcommon/files.cpp) is CVAR_INIT - only
+	//      settable from the command line, before Com_Init ever runs; an
+	//      env var read later by FS_Init would be too late to matter and
+	//      CVAR_INIT would silently ignore any subsequent Cvar_Set.
+	//   2. It is exactly how device.md already documents running the game
+	//      by hand ("+set fs_basepath ... +map academy1") - the launcher
+	//      now does programmatically what the user used to type.
+	// cl_auroraFboScale is the existing scale/input-transform bridge cvar
+	// (code/rd-gles3/gles3_fbo.cpp gles3_fbo_set_scale) - not CVAR_INIT,
+	// but kept on the same "+set" line for one consistent mechanism.
+	{
+		const char *resdir = Launcher_GetResourceDir();
+		if( resdir && *resdir )
+		{
+			char launcherArgs[ MAX_STRING_CHARS ];
+			char merged[ MAX_STRING_CHARS ];
+			Com_sprintf( launcherArgs, sizeof( launcherArgs ),
+				"+set fs_basepath \"%s\" +set cl_auroraFboScale %.3f ",
+				resdir, Launcher_GetFboScale() );
+			Q_strncpyz( merged, launcherArgs, sizeof( merged ) );
+			Q_strcat( merged, sizeof( merged ), commandLine );
+			Q_strncpyz( commandLine, merged, sizeof( commandLine ) );
+		}
+	}
+#endif
 
 	Com_Init (commandLine);
 

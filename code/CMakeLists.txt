@@ -44,6 +44,18 @@ if(BuildSPEngine OR BuildJK2SPEngine)
 	# Defines
 	set(SPEngineDefines ${SharedDefines} "_JK2EXE" ${AuroraDefines}) # it's called JK2EXE but it really just means Singleplayer Exe
 
+	if(AURORA)
+		# Port stage "Лаунчер (imgui)" (gameport/docs/imgui_launcher.md): the
+		# in-process ImGui launcher and its vendored SDL2/OpenGL3 ImGui
+		# backends are compiled straight into the SP exe (not a renderer
+		# .so - the launcher runs and tears itself down before any
+		# renderer module is even loaded). IMGUI_IMPL_OPENGL_ES3 picks the
+		# GLES3 loader branch, same reasoning as rd-gles3/CMakeLists.txt's
+		# identical define: this exe only ever creates a GL ES 3.0 context
+		# (shared/sdl/sdl_window.cpp GLimp_SetMode) on this platform.
+		set(SPEngineDefines ${SPEngineDefines} "IMGUI_IMPL_OPENGL_ES3")
+	endif(AURORA)
+
 	set(SPEngineIncludeDirectories
 		${SPEngineIncludeDirectories}
 		${SharedDir}
@@ -401,6 +413,53 @@ if(BuildSPEngine OR BuildJK2SPEngine)
 
 	source_group("sys" FILES ${SPEngineSysFiles})
 	set(SPEngineFiles ${SPEngineFiles} ${SPEngineSysFiles})
+
+	if(AURORA)
+		# Port stage "Лаунчер (imgui)": in-process resource-picker UI, its
+		# theme (gameport/docs/imgui-theme-spec.md) and the Dear ImGui core
+		# it needs. Sources are the SAME lib/imgui files rd-gles3/CMakeLists.txt
+		# already compiles into the renderer .so for the touch-UI overlay
+		# (commit e7b145f) - reused rather than duplicated, see the comment
+		# there for why the library is vendored under lib/imgui instead of
+		# referenced from gameport/. The two binaries each get their own
+		# statically-linked copy of ImGui's global state, which is fine:
+		# the launcher's ImGui context is fully destroyed (ImGui::
+		# DestroyContext in shared/launcher/launcher.cpp) before the
+		# renderer .so is ever loaded, so the two never coexist.
+		# imgui_impl_sdl2.* is new here (the renderer's touch-UI never
+		# feeds SDL input into ImGui, so it only needed the OpenGL3
+		# backend) - added to lib/imgui/backends alongside it.
+		set(SPEngineLauncherFiles
+			"${SharedDir}/launcher/launcher.h"
+			"${SharedDir}/launcher/launcher.cpp"
+			"${SharedDir}/launcher/theme.h"
+			"${SharedDir}/launcher/theme.cpp"
+			"${SharedDir}/launcher/fonts/NotoSansBold.h"
+			"${OpenJKLibDir}/imgui/imgui.h"
+			"${OpenJKLibDir}/imgui/imgui_internal.h"
+			"${OpenJKLibDir}/imgui/imgui.cpp"
+			"${OpenJKLibDir}/imgui/imgui_draw.cpp"
+			"${OpenJKLibDir}/imgui/imgui_tables.cpp"
+			"${OpenJKLibDir}/imgui/imgui_widgets.cpp"
+			"${OpenJKLibDir}/imgui/backends/imgui_impl_opengl3.h"
+			"${OpenJKLibDir}/imgui/backends/imgui_impl_opengl3.cpp"
+			"${OpenJKLibDir}/imgui/backends/imgui_impl_sdl2.h"
+			"${OpenJKLibDir}/imgui/backends/imgui_impl_sdl2.cpp"
+			)
+		source_group("launcher" FILES ${SPEngineLauncherFiles})
+		set(SPEngineFiles ${SPEngineFiles} ${SPEngineLauncherFiles})
+
+		set(SPEngineIncludeDirectories
+			${SPEngineIncludeDirectories}
+			"${SharedDir}/launcher"
+			"${OpenJKLibDir}/imgui"
+			"${OpenJKLibDir}/imgui/backends"
+			)
+
+		# GLES3/EGL headers for the launcher's GL calls (<GLES3/gl3.h>) -
+		# already required above for AURORA in general, listed again here
+		# only for discoverability; no duplicate pkg_check_modules call.
+	endif(AURORA)
 
     # Transparently use our bundled minizip.
     list(APPEND SPEngineIncludeDirectories ${MINIZIP_INCLUDE_DIRS})

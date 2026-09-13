@@ -261,6 +261,24 @@ void vk_initialize( void )
 	// vk.renderWidth/Height already updated to the new size above.
 	gles3_fbo_resize( vk.renderWidth, vk.renderHeight );
 
+	// Port stage "Лаунчер (imgui)" (gameport/docs/imgui_launcher.md,
+	// "Настройки" tab): the FBO scale picked in the launcher UI reaches
+	// here as "+set cl_auroraFboScale <value>" on the command line
+	// (shared/launcher/launcher.cpp, shared/sys/sys_main.cpp) - apply it
+	// through the existing bridge. gles3_fbo_set_scale() also mirrors the
+	// clamped value back into this same cvar for shared/sdl/sdl_input.cpp's
+	// input-transform divisor, so this is the single point both readers
+	// and the launcher's writer agree on. CVAR_ARCHIVE_ND (not
+	// CVAR_ARCHIVE): the launcher's own config
+	// (~/.config/<org>/<app>/launcher.conf) is already the persisted
+	// source of truth for this value, archiving it a second time into the
+	// engine's config would just be a second, potentially stale copy. No
+	// CVAR_LATCH: this read already only happens at renderer (re)init
+	// time, and gles3_fbo_set_scale()'s own Cvar_SetValue immediately
+	// after would otherwise latch against the flag this same call just
+	// added, printing a spurious "will be changed upon restarting".
+	gles3_fbo_set_scale( ri.Cvar_Get( "cl_auroraFboScale", "1.0", CVAR_ARCHIVE_ND )->value );
+
 	vk.pipelines_count = 0;
 	vk.pipelines_world_base = 0;
 
