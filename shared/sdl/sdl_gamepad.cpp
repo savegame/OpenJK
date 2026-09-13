@@ -19,8 +19,12 @@ along with OpenJK; if not, see <http://www.gnu.org/licenses/>.
 */
 
 // Aurora gamepad support - see sdl_gamepad.h for the full design rationale
-// (SDL_GameController vs. the legacy SDL_Joystick path, why actions go
-// through Cbuf_ExecuteText, why input is never rotated).
+// (SDL_GameController vs. the legacy SDL_Joystick path, the JOYn keycode
+// assignment, why the right stick alone is SE_MOUSE, why input is never
+// rotated). This file only ever turns SDL controller state into
+// Sys_QueEvent(SE_KEY, A_JOYn, ...) / Sys_QueEvent(SE_MOUSE, ...) calls -
+// it never decides what a button *does*; that lives entirely in binds
+// (see aurora_gamepad_defaults.cfg for the default layout).
 
 #include <SDL.h>
 #include <math.h>
@@ -34,26 +38,75 @@ along with OpenJK; if not, see <http://www.gnu.org/licenses/>.
 #ifdef AURORA
 
 // ---------------------------------------------------------------------------
-// cvars
+// cvars - sensitivity/feel only, never layout (see sdl_gamepad.h)
 // ---------------------------------------------------------------------------
 
 static cvar_t *cl_gamepad;					// 0 off, 1 on (default) - master switch
-static cvar_t *cl_gamepadDeadZone;			// 0..1 fraction of stick travel ignored, both sticks
+static cvar_t *cl_gamepadDeadZone;			// 0..1 fraction of stick travel ignored, both sticks;
+											// also the left stick's digitisation threshold
 static cvar_t *cl_gamepadTriggerThreshold;	// 0..1 fraction of trigger travel counted as "pressed"
-static cvar_t *cl_gamepadLookSpeed;		// mouse units/sec at full right-stick deflection
+static cvar_t *cl_gamepadLookSpeed;		// mouse units/sec at full right-stick deflection, gameplay
+static cvar_t *cl_gamepadMenuSpeed;		// mouse units/sec at full right-stick deflection, menu cursor
+static cvar_t *cl_gamepadLookCurve;		// 0 linear, 1 quadratic response, gameplay look only
 
 static SDL_GameController *gamepad = NULL;
 static SDL_JoystickID gamepadInstance = -1;
 
 // ---------------------------------------------------------------------------
-// state gates - same two switches sdl_touchui.cpp already uses to tell
-// menu from gameplay (Key_GetCatcher() & KEYCATCH_UI, cls.state).
+// JOYn slot assignment - see sdl_gamepad.h for the full rationale. Slots
+// 0..20 mirror the SDL_GameControllerButton enum value directly; slots
+// 21+ are synthetic digital signals derived from analog axes so the left
+// stick and triggers stay bindable like any other button.
 // ---------------------------------------------------------------------------
 
-static int Aurora_Gamepad_InGameplay( void )
+enum
 {
-	return cls.state == CA_ACTIVE && !( Key_GetCatcher() & ( KEYCATCH_UI | KEYCATCH_CONSOLE ) );
+	JOY_LEFTTRIGGER = 21,
+	JOY_RIGHTTRIGGER = 22,
+	JOY_LEFTSTICK_UP = 23,
+	JOY_LEFTSTICK_DOWN = 24,
+	JOY_LEFTSTICK_LEFT = 25,
+	JOY_LEFTSTICK_RIGHT = 26,
+
+	JOY_NUM_SLOTS = 32	// A_JOY0..A_JOY31
+};
+
+// Current reported state of every JOYn slot this module drives, purely for
+// edge detection (only queue an event on an actual state change) and for
+// cleanly releasing everything still "down" on disconnect/toggle-off.
+static qboolean joyDown[JOY_NUM_SLOTS];
+
+static void Aurora_Gamepad_SetJoy( int slot, qboolean down )
+{
+	if ( joyDown[slot] == down )
+	{
+		return;
+	}
+	joyDown[slot] = down;
+	Sys_QueEvent( 0, SE_KEY, A_JOY0 + slot, down, 0, NULL );
 }
+
+static void Aurora_Gamepad_ReleaseAllJoy( void )
+{
+	int slot;
+
+	for ( slot = 0; slot < JOY_NUM_SLOTS; slot++ )
+	{
+		if ( joyDown[slot] )
+		{
+			joyDown[slot] = qfalse;
+			Sys_QueEvent( 0, SE_KEY, A_JOY0 + slot, qfalse, 0, NULL );
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// state gates - only needed for the right stick's dual role (camera vs.
+// menu cursor) and the A-button menu click. Ordinary buttons need none of
+// this: their JOYn binds are already suppressed while a menu/console is
+// catching keys by the engine's own CL_ParseBinding (cl_keys.cpp), exactly
+// like a real keyboard/joystick key.
+// ---------------------------------------------------------------------------
 
 static int Aurora_Gamepad_MenuActive( void )
 {
@@ -61,9 +114,9 @@ static int Aurora_Gamepad_MenuActive( void )
 }
 
 // Right stick doubles as the camera in gameplay and the cursor in the
-// menu - active a little more broadly than Aurora_Gamepad_InGameplay()
-// (e.g. also with the console down), exactly like a real mouse still
-// turns the camera with the console down.
+// menu - active a little more broadly than "gameplay" (e.g. also with the
+// console down), exactly like a real mouse still turns the camera with
+// the console down.
 static int Aurora_Gamepad_RightStickActive( void )
 {
 	if ( Aurora_Gamepad_MenuActive() ) return 1;
@@ -71,51 +124,53 @@ static int Aurora_Gamepad_RightStickActive( void )
 }
 
 // ---------------------------------------------------------------------------
-// held actions (buttons/triggers/stick that map to +action/-action) - one
-// flag per action, so leaving gameplay (menu opens, disconnect, cl_gamepad
-// turned off) can cleanly release everything still held, exactly like
-// sdl_touchui.cpp's ReleaseButton/StickStop cleanup.
+// buttons -> JOY0..JOY20, 1:1 with the SDL_GameControllerButton enum.
+// Polled (not event-driven) so it shares one simple edge-detection helper
+// with the axis-derived digital slots below, exactly like
+// sdl_touchui.cpp's polling model.
 // ---------------------------------------------------------------------------
 
-static int heldForward, heldBack, heldMoveLeft, heldMoveRight;
-static int heldJump, heldCrouch, heldUse, heldFire, heldAltFire;
-
-static void Aurora_Gamepad_ReleaseAll( void )
+static void Aurora_Gamepad_Buttons( void )
 {
-	if ( heldForward )   { Cbuf_ExecuteText( EXEC_APPEND, "-forward\n" );   heldForward = 0; }
-	if ( heldBack )      { Cbuf_ExecuteText( EXEC_APPEND, "-back\n" );      heldBack = 0; }
-	if ( heldMoveLeft )  { Cbuf_ExecuteText( EXEC_APPEND, "-moveleft\n" );  heldMoveLeft = 0; }
-	if ( heldMoveRight ) { Cbuf_ExecuteText( EXEC_APPEND, "-moveright\n" ); heldMoveRight = 0; }
-	if ( heldJump )      { Cbuf_ExecuteText( EXEC_APPEND, "-moveup\n" );    heldJump = 0; }
-	if ( heldCrouch )    { Cbuf_ExecuteText( EXEC_APPEND, "-movedown\n" );  heldCrouch = 0; }
-	if ( heldUse )       { Cbuf_ExecuteText( EXEC_APPEND, "-use\n" );       heldUse = 0; }
-	if ( heldFire )      { Cbuf_ExecuteText( EXEC_APPEND, "-attack\n" );    heldFire = 0; }
-	if ( heldAltFire )   { Cbuf_ExecuteText( EXEC_APPEND, "-altattack\n" ); heldAltFire = 0; }
+	int button;
+
+	for ( button = 0; button < SDL_CONTROLLER_BUTTON_MAX && button < JOY_LEFTTRIGGER; button++ )
+	{
+		qboolean down = (qboolean)( SDL_GameControllerGetButton( gamepad, (SDL_GameControllerButton)button ) != 0 );
+		Aurora_Gamepad_SetJoy( button, down );
+	}
 }
 
 // ---------------------------------------------------------------------------
-// left stick -> movement (gameplay only, digital emulation of the four
-// move actions - same threshold-crossing scheme as sdl_touchui.cpp's
-// Aurora_TouchUI_StickApply, just fed by SDL_CONTROLLER_AXIS_LEFTX/LEFTY
-// instead of a synthesized finger vector).
+// triggers -> JOY_LEFTTRIGGER/JOY_RIGHTTRIGGER. No native "digital trigger"
+// button exists on SDL_GameController - edge-detected against
+// cl_gamepadTriggerThreshold, same idea the legacy joystick path uses for
+// its own axis thresholds (sdl_input.cpp's in_joystickThreshold), just
+// exposed as a bindable JOYn instead of a hardcoded action.
 // ---------------------------------------------------------------------------
 
-static void Aurora_Gamepad_LeftStick( int gameplay )
+static void Aurora_Gamepad_Triggers( void )
+{
+	float rt, lt, threshold;
+
+	threshold = cl_gamepadTriggerThreshold->value;
+	rt = SDL_GameControllerGetAxis( gamepad, SDL_CONTROLLER_AXIS_TRIGGERRIGHT ) / 32767.0f;
+	lt = SDL_GameControllerGetAxis( gamepad, SDL_CONTROLLER_AXIS_TRIGGERLEFT ) / 32767.0f;
+
+	Aurora_Gamepad_SetJoy( JOY_RIGHTTRIGGER, (qboolean)( rt > threshold ) );
+	Aurora_Gamepad_SetJoy( JOY_LEFTTRIGGER,  (qboolean)( lt > threshold ) );
+}
+
+// ---------------------------------------------------------------------------
+// left stick -> four digital direction slots (see sdl_gamepad.h for why
+// this stick is digitised rather than sent as SE_JOYSTICK_AXIS/mapped to
+// CL_JoystickMove: that path is hardcoded to forward/side/up move with no
+// bind table, so it cannot be rebound).
+// ---------------------------------------------------------------------------
+
+static void Aurora_Gamepad_LeftStick( void )
 {
 	float lx, ly, side, forward, dz;
-	int forwardNow, backNow, leftNow, rightNow;
-
-	if ( !gameplay )
-	{
-		if ( heldForward || heldBack || heldMoveLeft || heldMoveRight )
-		{
-			if ( heldForward )   { Cbuf_ExecuteText( EXEC_APPEND, "-forward\n" );   heldForward = 0; }
-			if ( heldBack )      { Cbuf_ExecuteText( EXEC_APPEND, "-back\n" );      heldBack = 0; }
-			if ( heldMoveLeft )  { Cbuf_ExecuteText( EXEC_APPEND, "-moveleft\n" );  heldMoveLeft = 0; }
-			if ( heldMoveRight ) { Cbuf_ExecuteText( EXEC_APPEND, "-moveright\n" ); heldMoveRight = 0; }
-		}
-		return;
-	}
 
 	lx = SDL_GameControllerGetAxis( gamepad, SDL_CONTROLLER_AXIS_LEFTX ) / 32767.0f;
 	ly = SDL_GameControllerGetAxis( gamepad, SDL_CONTROLLER_AXIS_LEFTY ) / 32767.0f;
@@ -124,15 +179,10 @@ static void Aurora_Gamepad_LeftStick( int gameplay )
 	side = lx;
 	forward = -ly;	// SDL's Y axis is positive-down; pushing the stick up is forward
 
-	forwardNow = forward >  dz;
-	backNow    = forward < -dz;
-	leftNow    = side    < -dz;
-	rightNow   = side    >  dz;
-
-	if ( forwardNow != heldForward )   { Cbuf_ExecuteText( EXEC_APPEND, forwardNow ? "+forward\n"   : "-forward\n" );   heldForward = forwardNow; }
-	if ( backNow    != heldBack )      { Cbuf_ExecuteText( EXEC_APPEND, backNow    ? "+back\n"       : "-back\n" );      heldBack = backNow; }
-	if ( leftNow    != heldMoveLeft )  { Cbuf_ExecuteText( EXEC_APPEND, leftNow    ? "+moveleft\n"   : "-moveleft\n" );  heldMoveLeft = leftNow; }
-	if ( rightNow   != heldMoveRight ) { Cbuf_ExecuteText( EXEC_APPEND, rightNow   ? "+moveright\n"  : "-moveright\n" ); heldMoveRight = rightNow; }
+	Aurora_Gamepad_SetJoy( JOY_LEFTSTICK_UP,    (qboolean)( forward >  dz ) );
+	Aurora_Gamepad_SetJoy( JOY_LEFTSTICK_DOWN,  (qboolean)( forward < -dz ) );
+	Aurora_Gamepad_SetJoy( JOY_LEFTSTICK_LEFT,  (qboolean)( side    < -dz ) );
+	Aurora_Gamepad_SetJoy( JOY_LEFTSTICK_RIGHT, (qboolean)( side    >  dz ) );
 }
 
 // ---------------------------------------------------------------------------
@@ -142,15 +192,25 @@ static void Aurora_Gamepad_LeftStick( int gameplay )
 // ("Ввод от геймпада... НЕ трансформируем"). Rate-based (scaled by frame
 // time), unlike the touch camera pad which is driven by finger deltas -
 // there is no finger here, only a continuous deflection to integrate.
+//
+// Gameplay and menu use independent speed cvars (cl_gamepadLookSpeed /
+// cl_gamepadMenuSpeed): the same raw SE_MOUSE delta is scaled very
+// differently downstream depending on the consumer (CL_MouseMove applies
+// cl_sensitivity/m_yaw/m_pitch/FOV in gameplay; _UI_MouseEvent uses the
+// menu cursor delta directly, unscaled) so one shared speed cannot feel
+// right in both. Gameplay optionally applies a quadratic response curve
+// (cl_gamepadLookCurve) for precise aim near center and fast turns at full
+// deflection without changing the top speed; the menu cursor is always
+// linear.
 // ---------------------------------------------------------------------------
 
 static float lookRemX, lookRemY;
 
 static void Aurora_Gamepad_RightStick( void )
 {
-	float rx, ry, dz, mag;
-	float unitsPerSec, dxf, dyf;
-	int dx, dy;
+	float rx, ry, dz, mag, t;
+	float unitsPerSec, dxf, dyf, scale;
+	int dx, dy, menu;
 
 	if ( !Aurora_Gamepad_RightStickActive() )
 	{
@@ -169,15 +229,40 @@ static void Aurora_Gamepad_RightStick( void )
 		return;
 	}
 
-	// Rescale so the response starts at 0 right past the dead zone
-	// instead of jumping straight to (mag - dz)'s value.
+	// t in (0,1]: how far past the dead zone the stick is deflected
+	t = ( mag - dz ) / ( 1.0f - dz );
+	if ( t > 1.0f )
 	{
-		float scale = ( mag - dz ) / ( 1.0f - dz ) / mag;
-		rx *= scale;
-		ry *= scale;
+		t = 1.0f;
 	}
 
-	unitsPerSec = cl_gamepadLookSpeed->value;
+	menu = Aurora_Gamepad_MenuActive();
+
+	if ( menu )
+	{
+		// Menu cursor: left exactly as it felt before this task (linear,
+		// independent cvar/default from the gameplay look speed below).
+		unitsPerSec = cl_gamepadMenuSpeed->value;
+	}
+	else
+	{
+		unitsPerSec = cl_gamepadLookSpeed->value;
+		if ( cl_gamepadLookCurve->integer )
+		{
+			// Quadratic response: precise aim at small deflection, fast
+			// turning at full deflection - same top speed either way
+			// since t==1 maps to t==1 regardless.
+			t = t * t;
+		}
+	}
+
+	// Rescale the raw axis vector to the (possibly curved) response,
+	// keeping direction, so response starts at 0 right past the dead
+	// zone instead of jumping straight to (mag - dz)'s value.
+	scale = t / mag;
+	rx *= scale;
+	ry *= scale;
+
 	dxf = rx * unitsPerSec * ( (float)cls.realFrametime / 1000.0f ) + lookRemX;
 	dyf = ry * unitsPerSec * ( (float)cls.realFrametime / 1000.0f ) + lookRemY;
 
@@ -193,138 +278,28 @@ static void Aurora_Gamepad_RightStick( void )
 }
 
 // ---------------------------------------------------------------------------
-// triggers -> fire / alt-fire (gameplay only). No native "digital trigger"
-// event exists - edge-detected against cl_gamepadTriggerThreshold, exactly
-// like the old joystick path thresholds an axis (sdl_input.cpp's
-// in_joystickThreshold), just mapped to the real +attack/-altattack
-// actions instead of a synthesized key.
+// A button's second role: while a menu is showing, the press edge also
+// clicks - synthesizing A_MOUSE1 (a mouse button code, not a keyboard
+// keycode) press+release, exactly like the touch-UI trackpad's
+// tap-to-click. This is standing in for "the button the UI already knows
+// how to react to" (menus in this engine are driven by mouse/Enter, not by
+// a generic bindable "activate" command), so it cannot be expressed as a
+// JOYn bind - JOY0 itself is still sent as an ordinary bindable button by
+// Aurora_Gamepad_Buttons() above (bound to +moveup/jump by default).
 // ---------------------------------------------------------------------------
 
-static void Aurora_Gamepad_Triggers( int gameplay )
+static qboolean wasAForClick;
+
+static void Aurora_Gamepad_MenuClick( void )
 {
-	float rt, lt, threshold;
-	int fireNow, altFireNow;
+	qboolean a = (qboolean)( SDL_GameControllerGetButton( gamepad, SDL_CONTROLLER_BUTTON_A ) != 0 );
 
-	if ( !gameplay )
+	if ( Aurora_Gamepad_MenuActive() && a && !wasAForClick )
 	{
-		if ( heldFire )    { Cbuf_ExecuteText( EXEC_APPEND, "-attack\n" );    heldFire = 0; }
-		if ( heldAltFire ) { Cbuf_ExecuteText( EXEC_APPEND, "-altattack\n" ); heldAltFire = 0; }
-		return;
+		Sys_QueEvent( 0, SE_KEY, A_MOUSE1, qtrue, 0, NULL );
+		Sys_QueEvent( 0, SE_KEY, A_MOUSE1, qfalse, 0, NULL );
 	}
-
-	threshold = cl_gamepadTriggerThreshold->value;
-	rt = SDL_GameControllerGetAxis( gamepad, SDL_CONTROLLER_AXIS_TRIGGERRIGHT ) / 32767.0f;
-	lt = SDL_GameControllerGetAxis( gamepad, SDL_CONTROLLER_AXIS_TRIGGERLEFT ) / 32767.0f;
-
-	fireNow    = rt > threshold;
-	altFireNow = lt > threshold;
-
-	if ( fireNow    != heldFire )    { Cbuf_ExecuteText( EXEC_APPEND, fireNow    ? "+attack\n"    : "-attack\n" );    heldFire = fireNow; }
-	if ( altFireNow != heldAltFire ) { Cbuf_ExecuteText( EXEC_APPEND, altFireNow ? "+altattack\n"  : "-altattack\n" ); heldAltFire = altFireNow; }
-}
-
-// ---------------------------------------------------------------------------
-// A: jump in gameplay, click in the menu. B: crouch. X: use. All three
-// are plain digital buttons via SDL_GameControllerGetButton.
-// ---------------------------------------------------------------------------
-
-static int wasA, wasB, wasX;
-
-static void Aurora_Gamepad_FaceButtons( int gameplay, int menu )
-{
-	int a = SDL_GameControllerGetButton( gamepad, SDL_CONTROLLER_BUTTON_A ) != 0;
-	int b = SDL_GameControllerGetButton( gamepad, SDL_CONTROLLER_BUTTON_B ) != 0;
-	int x = SDL_GameControllerGetButton( gamepad, SDL_CONTROLLER_BUTTON_X ) != 0;
-
-	if ( gameplay )
-	{
-		if ( a != heldJump ) { Cbuf_ExecuteText( EXEC_APPEND, a ? "+moveup\n"   : "-moveup\n" );   heldJump   = a; }
-		if ( b != heldCrouch ){ Cbuf_ExecuteText( EXEC_APPEND, b ? "+movedown\n" : "-movedown\n" ); heldCrouch = b; }
-		if ( x != heldUse )   { Cbuf_ExecuteText( EXEC_APPEND, x ? "+use\n"      : "-use\n" );      heldUse    = x; }
-	}
-	else
-	{
-		if ( heldJump )   { Cbuf_ExecuteText( EXEC_APPEND, "-moveup\n" );   heldJump = 0; }
-		if ( heldCrouch ) { Cbuf_ExecuteText( EXEC_APPEND, "-movedown\n" ); heldCrouch = 0; }
-		if ( heldUse )    { Cbuf_ExecuteText( EXEC_APPEND, "-use\n" );      heldUse = 0; }
-
-		// A clicks in the menu - a tap, on the press edge, exactly like the
-		// touch-UI trackpad's tap-to-click (sdl_input.cpp's aurora_touch
-		// SDL_FINGERUP handling).
-		if ( menu && a && !wasA )
-		{
-			Sys_QueEvent( 0, SE_KEY, A_MOUSE1, qtrue, 0, NULL );
-			Sys_QueEvent( 0, SE_KEY, A_MOUSE1, qfalse, 0, NULL );
-		}
-	}
-
-	wasA = a;
-	wasB = b;
-	wasX = x;
-}
-
-// ---------------------------------------------------------------------------
-// LB/RB -> previous/next weapon; D-pad -> four fixed weapon slots
-// (code/game/weapons.h: WP_SABER=1, WP_BLASTER_PISTOL=2, WP_BLASTER=3,
-// WP_THERMAL=9 - saber, sidearm, primary blaster, thermal detonator: a
-// spread that is useful on its own, distinct from LB/RB's plain cycling).
-// One-shot commands (no held state), fired on the press edge only,
-// gameplay only.
-// ---------------------------------------------------------------------------
-
-typedef struct {
-	SDL_GameControllerButton	button;
-	const char					*cmd;
-	int							wasDown;
-} gamepadOneShot_t;
-
-static gamepadOneShot_t oneShots[] = {
-	{ SDL_CONTROLLER_BUTTON_LEFTSHOULDER,  "weapprev\n", 0 },
-	{ SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, "weapnext\n", 0 },
-	{ SDL_CONTROLLER_BUTTON_DPAD_UP,       "weapon 1\n", 0 },	// WP_SABER
-	{ SDL_CONTROLLER_BUTTON_DPAD_LEFT,     "weapon 2\n", 0 },	// WP_BLASTER_PISTOL
-	{ SDL_CONTROLLER_BUTTON_DPAD_DOWN,     "weapon 3\n", 0 },	// WP_BLASTER
-	{ SDL_CONTROLLER_BUTTON_DPAD_RIGHT,    "weapon 9\n", 0 },	// WP_THERMAL
-};
-static const size_t numOneShots = sizeof( oneShots ) / sizeof( oneShots[0] );
-
-static void Aurora_Gamepad_OneShots( int gameplay )
-{
-	size_t i;
-
-	for ( i = 0; i < numOneShots; i++ )
-	{
-		int down = gameplay && SDL_GameControllerGetButton( gamepad, oneShots[i].button ) != 0;
-
-		if ( down && !oneShots[i].wasDown )
-		{
-			Cbuf_ExecuteText( EXEC_APPEND, oneShots[i].cmd );
-		}
-		oneShots[i].wasDown = down;
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Start -> Escape (pause/menu toggle or back-out), available in every
-// state - not gated to gameplay at all, mirroring the touch-UI's menu
-// button (sdl_touchui.cpp's TB_MENU, downCmd == NULL: sends A_ESCAPE
-// straight into the event queue instead of a console command, since
-// Escape's meaning is entirely context-sensitive inside the engine
-// already, see research/touch_ui_research.md п.2/4).
-// ---------------------------------------------------------------------------
-
-static int wasStart;
-
-static void Aurora_Gamepad_Start( void )
-{
-	int down = SDL_GameControllerGetButton( gamepad, SDL_CONTROLLER_BUTTON_START ) != 0;
-
-	if ( down && !wasStart )
-	{
-		Sys_QueEvent( 0, SE_KEY, A_ESCAPE, qtrue, 0, NULL );
-		Sys_QueEvent( 0, SE_KEY, A_ESCAPE, qfalse, 0, NULL );
-	}
-	wasStart = down;
+	wasAForClick = a;
 }
 
 // ---------------------------------------------------------------------------
@@ -363,11 +338,11 @@ static void Aurora_Gamepad_Close( void )
 		return;
 	}
 
-	Aurora_Gamepad_ReleaseAll();
+	Aurora_Gamepad_ReleaseAllJoy();
 	SDL_GameControllerClose( gamepad );
 	gamepad = NULL;
 	gamepadInstance = -1;
-	wasA = wasB = wasX = wasStart = 0;
+	wasAForClick = qfalse;
 	lookRemX = lookRemY = 0.0f;
 }
 
@@ -395,23 +370,17 @@ Aurora_Gamepad_Frame
 */
 void Aurora_Gamepad_Frame( void )
 {
-	int gameplay, menu;
-
 	if ( !cl_gamepad->integer || !gamepad || !SDL_GameControllerGetAttached( gamepad ) )
 	{
-		Aurora_Gamepad_ReleaseAll();
+		Aurora_Gamepad_ReleaseAllJoy();
 		return;
 	}
 
-	gameplay = Aurora_Gamepad_InGameplay();
-	menu = Aurora_Gamepad_MenuActive();
-
-	Aurora_Gamepad_LeftStick( gameplay );
+	Aurora_Gamepad_Buttons();
+	Aurora_Gamepad_Triggers();
+	Aurora_Gamepad_LeftStick();
 	Aurora_Gamepad_RightStick();
-	Aurora_Gamepad_Triggers( gameplay );
-	Aurora_Gamepad_FaceButtons( gameplay, menu );
-	Aurora_Gamepad_OneShots( gameplay );
-	Aurora_Gamepad_Start();
+	Aurora_Gamepad_MenuClick();
 }
 
 void Aurora_Gamepad_Init( void )
@@ -422,8 +391,19 @@ void Aurora_Gamepad_Init( void )
 	Cvar_CheckRange( cl_gamepadDeadZone, 0.02f, 0.9f, qfalse );
 	cl_gamepadTriggerThreshold = Cvar_Get( "cl_gamepadTriggerThreshold", "0.25", CVAR_ARCHIVE );
 	Cvar_CheckRange( cl_gamepadTriggerThreshold, 0.05f, 0.95f, qfalse );
-	cl_gamepadLookSpeed = Cvar_Get( "cl_gamepadLookSpeed", "250", CVAR_ARCHIVE );
-	Cvar_CheckRange( cl_gamepadLookSpeed, 10.0f, 4000.0f, qfalse );
+	// Gameplay look: raised well past the old shared default (250) per
+	// on-device feedback that camera turn was much too slow once routed
+	// through CL_MouseMove's cl_sensitivity/m_yaw scaling; still an
+	// archived cvar so it can be tuned without a rebuild.
+	cl_gamepadLookSpeed = Cvar_Get( "cl_gamepadLookSpeed", "3000", CVAR_ARCHIVE );
+	Cvar_CheckRange( cl_gamepadLookSpeed, 10.0f, 50000.0f, qfalse );
+	// Menu cursor: kept at the old shared default - on-device feedback was
+	// that this speed already felt right, it must not move when the
+	// gameplay default above changes.
+	cl_gamepadMenuSpeed = Cvar_Get( "cl_gamepadMenuSpeed", "250", CVAR_ARCHIVE );
+	Cvar_CheckRange( cl_gamepadMenuSpeed, 10.0f, 4000.0f, qfalse );
+	cl_gamepadLookCurve = Cvar_Get( "cl_gamepadLookCurve", "1", CVAR_ARCHIVE );
+	Cvar_CheckRange( cl_gamepadLookCurve, 0.0f, 1.0f, qtrue );
 
 	if ( !SDL_WasInit( SDL_INIT_GAMECONTROLLER ) )
 	{

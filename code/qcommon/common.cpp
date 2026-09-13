@@ -34,6 +34,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #endif
+#ifdef AURORA
+#include <errno.h>
+#endif
 
 // Because renderer.
 #include "../rd-common/tr_public.h"
@@ -1003,6 +1006,77 @@ static void NORETURN Com_Crash_f( void ) {
 	abort();
 }
 
+#ifdef AURORA
+/*
+==================
+Com_ExecuteAuroraGamepadDefaults
+
+Feeds the packaged default gamepad bindings (see shared/sdl/sdl_gamepad.h/
+.cpp for the JOYn layout they bind) into the command buffer. That config
+ships with the RPM under /usr/share/<AURORA_ORG>.<AURORA_APP>/ - outside
+the game's own asset search paths (fs_basepath there points at the
+player's separately installed, proprietary GameData, which this port does
+not and cannot bundle) - so it is read directly off disk with plain file
+I/O instead of through FS_FOpenFileRead/"exec", using the same fixed
+/usr/share/<org>.<app>/ convention already used for the bundled renderer
+and game libraries (shared/sys/sys_main.cpp).
+
+Called from Com_ExecuteCfg() strictly BETWEEN "exec default.cfg" and the
+player's own config/autoexec_sp.cfg, so any "bind JOYn ..." the player
+has since changed (by hand or via the in-game Controls menu, which
+persists into Q3CONFIG_NAME on exit) always overrides these defaults on
+the next launch - default.cfg -> our defaults -> player config, last
+write wins per key.
+==================
+*/
+static void Com_ExecuteAuroraGamepadDefaults( void )
+{
+	static const char *path = "/usr/share/" AURORA_ORG "." AURORA_APP "/aurora_gamepad_defaults.cfg";
+	FILE *f;
+	long len;
+	static char buf[16384];
+
+	f = fopen( path, "rb" );
+	if ( !f )
+	{
+		// Not fatal - e.g. a developer host build that never installed the
+		// RPM payload. The gamepad still works, just unbound until the
+		// player binds JOYn manually.
+		Com_Printf( "Aurora: gamepad defaults not found at %s (errno %d) - gamepad JOYn keys start unbound\n", path, errno );
+		return;
+	}
+
+	fseek( f, 0, SEEK_END );
+	len = ftell( f );
+	fseek( f, 0, SEEK_SET );
+
+	if ( len <= 0 || (size_t)len >= sizeof( buf ) )
+	{
+		Com_Printf( "Aurora: gamepad defaults at %s have an unexpected size (%ld) - skipped\n", path, len );
+		fclose( f );
+		return;
+	}
+
+	if ( fread( buf, 1, (size_t)len, f ) != (size_t)len )
+	{
+		Com_Printf( "Aurora: failed reading gamepad defaults from %s\n", path );
+		fclose( f );
+		return;
+	}
+	fclose( f );
+	buf[len] = '\0';
+
+	Com_Printf( "Aurora: executing gamepad defaults from %s\n", path );
+	// NOTE: EXEC_NOW would call Cmd_ExecuteString() on the whole blob as a
+	// single command line - wrong for a multi-line cfg. EXEC_INSERT drives
+	// Cbuf_InsertText(), the same primitive Cmd_Exec_f() uses for a real
+	// "exec", which preserves the embedded newlines so Cbuf_Execute() below
+	// runs each "bind ..." line as its own command.
+	Cbuf_ExecuteText( EXEC_INSERT, buf );
+	Cbuf_Execute();
+}
+#endif
+
 /*
 ==================
 Com_ExecuteCfg
@@ -1013,6 +1087,13 @@ void Com_ExecuteCfg(void)
 {
 	Cbuf_ExecuteText(EXEC_NOW, "exec default.cfg\n");
 	Cbuf_Execute(); // Always execute after exec to prevent text buffer overflowing
+
+#ifdef AURORA
+	// Aurora default gamepad bindings (see comment on
+	// Com_ExecuteAuroraGamepadDefaults above) - after default.cfg, before
+	// the player's own config, so a rebind always wins.
+	Com_ExecuteAuroraGamepadDefaults();
+#endif
 
 	if(!Com_SafeMode())
 	{
