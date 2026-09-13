@@ -70,20 +70,39 @@ along with OpenJK; if not, see <http://www.gnu.org/licenses/>.
 // JOY21        = left trigger (LT), digitised: down when the axis exceeds
 //                cl_gamepadTriggerThreshold.
 // JOY22        = right trigger (RT), same digitisation.
-// JOY23..26    = left stick digitised as four directions (up/down/left/
-//                right), down when the axis exceeds cl_gamepadDeadZone.
-//                This is the left-stick design decision for this task: the
-//                engine's other analog-axis path (SE_JOYSTICK_AXIS ->
+// JOY23..26    = left stick, ALSO exposed as four digital direction slots
+//                (up/down/left/right), down when the axis exceeds
+//                cl_gamepadDeadZone - kept only as an optional, fully
+//                rebindable fallback (e.g. "bind JOY23 +forward" for a
+//                player who wants dpad-style digital movement back, or
+//                wants to put something else entirely on these slots).
+//                They are NOT bound by default any more (see below) and
+//                are NOT how the left stick drives movement day to day -
+//                that is Aurora_Gamepad_GetMove()'s job (analog, see
+//                below), read directly by CL_AuroraGamepadMove()
+//                (code/client/cl_input.cpp) once per usercmd. Movement
+//                needed a genuinely continuous, variable-speed response
+//                (walk at partial deflection, smoothly up to full run at
+//                full deflection) - a purely digital JOYn/bind path can
+//                only ever be "pressed" or "not pressed", i.e. dpad
+//                emulation, which is exactly what this task replaced.
+//                Analog movement still deliberately bypasses the engine's
+//                other analog-axis path (SE_JOYSTICK_AXIS ->
 //                CL_JoystickEvent -> CL_JoystickMove, qcommon/common.cpp +
-//                cl_input.cpp) wires AXIS_SIDE/AXIS_FORWARD/AXIS_UP
-//                straight into cmd->rightmove/forwardmove/upmove with no
-//                bind table involved at all - not rebindable, and it is
-//                also the legacy single-analog-stick path this module is
-//                deliberately not reusing (see above). Digital JOY codes
-//                keep the left stick fully rebindable through the same
-//                `bind` mechanism as every other button, at the cost of a
-//                threshold instead of a continuous analog response - an
-//                acceptable trade for a walk/run/strafe FPS control scheme.
+//                cl_input.cpp): that legacy single-stick path ties the
+//                side axis to camera yaw unless in_strafe is held, and the
+//                forward axis to pitch look while in_mlooking, because it
+//                was designed for a controller with only one analog stick
+//                doing double duty for look AND move - wrong on this
+//                dual-stick layout, where the right stick already owns
+//                look via SE_MOUSE (see below) and the left stick should
+//                always mean "move", never "turn". Aurora_Gamepad_GetMove()
+//                instead hands CL_AuroraGamepadMove() ready-to-clamp
+//                forwardmove/rightmove deltas (plus a walk/run verdict for
+//                BUTTON_WALKING) that go straight into the usercmd, the
+//                same -127..127 continuum a keyboard's Run key already
+//                produces at its two fixed points (64/127) - the stick
+//                just fills in everything in between.
 // JOY27..31    = unused, reserved.
 //
 // Right stick is the one deliberate exception: it is delivered as SE_MOUSE
@@ -140,6 +159,13 @@ along with OpenJK; if not, see <http://www.gnu.org/licenses/>.
 //                               aim near center, fast turns at full
 //                               deflection, same top speed either way);
 //                               the menu cursor is always linear.
+//   cl_gamepadMoveCurve       - 0 linear, 1 (default) quadratic response
+//                               on the left stick's analog move magnitude
+//                               (see Aurora_Gamepad_GetMove() below) -
+//                               same idea as cl_gamepadLookCurve: easier
+//                               to hold a precise slow walk near center,
+//                               same full run at full deflection either
+//                               way.
 //
 // The existing physical-input-displaces-touch-ui rule
 // (Aurora_TouchUI_NoteJoystickChange/Aurora_TouchUI_RealJoystickConnected
@@ -165,3 +191,28 @@ void Aurora_Gamepad_Frame( void );
 // first recognised controller / closes it and tries the next one still
 // plugged in. Called from IN_ProcessEvents's event switch.
 void Aurora_Gamepad_Event( const SDL_Event *ev );
+
+// Left stick, continuous - called once per usercmd from
+// CL_AuroraGamepadMove() (code/client/cl_input.cpp), NOT from anywhere in
+// this file's own per-frame polling. See the JOY23..26 section above for
+// why the left stick is analog rather than routed through JOY binds or
+// through the engine's legacy CL_JoystickMove path.
+//
+// Returns qfalse (leaving *forwardmove/*rightmove/*walking untouched) when
+// the gamepad is off/disconnected or the stick is inside the dead zone -
+// so the caller only ever touches cmd/BUTTON_WALKING when the stick
+// actually wants to say something, never fighting a keyboard-only frame.
+//
+// On qtrue:
+//   *forwardmove/*rightmove - -127..127, dead-zone-rescaled and (per
+//                              cl_gamepadMoveCurve) curve-shaped, ready to
+//                              add onto usercmd_t's own fields the same
+//                              way CL_JoystickMove adds cl.joystickAxis[].
+//   *walking                - qtrue below half deflection (mirrors
+//                              CL_KeyMove's own walk speed of 64 out of a
+//                              127 max), qfalse from there up to full
+//                              deflection - so a full push always yields
+//                              the same BUTTON_WALKING-clear, full-127
+//                              magnitude a held Run key gives today,
+//                              never a value in between.
+qboolean Aurora_Gamepad_GetMove( int *forwardmove, int *rightmove, qboolean *walking );

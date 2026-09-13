@@ -32,6 +32,12 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include <cmath>
 #endif
 
+#ifdef AURORA
+// Analog left-stick movement (CL_AuroraGamepadMove below) - see
+// shared/sdl/sdl_gamepad.h for the full design rationale.
+#include "sdl/sdl_gamepad.h"
+#endif
+
 unsigned	frame_msec;
 int			old_com_frameTime;
 float cl_mPitchOverride = 0.0f;
@@ -523,6 +529,59 @@ void CL_JoystickMove( usercmd_t *cmd ) {
 	cmd->upmove = ClampChar( cmd->upmove + cl.joystickAxis[AXIS_UP] );
 }
 
+#ifdef AURORA
+/*
+=================
+CL_AuroraGamepadMove
+
+Adds continuous left-stick movement on top of whatever CL_KeyMove/
+CL_JoystickMove already produced this frame - see shared/sdl/sdl_gamepad.h
+(JOY23..26 section) for why the left stick is analog rather than routed
+through those digital JOY binds or through CL_JoystickMove's own
+legacy single-analog-stick branching above (that path ties the side axis
+to camera yaw unless in_strafe is held, and the forward axis to pitch
+look while in_mlooking - wrong on this dual-stick layout, where the right
+stick already owns look via SE_MOUSE and the left stick should always
+mean "move").
+
+Aurora_Gamepad_GetMove() hands back a -127..127 forward/right delta,
+already dead-zone-rescaled and curve-shaped, which is exactly the range
+usercmd_t's own fields (and PM_CmdScale's magnitude-based speed scaling,
+bg_pmove.cpp) already treat as a continuous throttle - so a light push
+yields a slow walk, easing smoothly up to the same 127 a keyboard's held
+Run key gives today at full deflection, with everything in between
+actually reachable instead of only two fixed speeds. Added (ClampChar),
+not overwritten, so a keyboard plugged in alongside a gamepad is not
+punished; a stick left centered contributes nothing and this function is
+a no-op for that frame.
+
+BUTTON_WALKING (leg anim / footstep volume, see bg_pmove.cpp) is decided
+by the stick's own deflection - independent of cl_run/in_speed, and only
+when the stick actually contributed to this cmd. Unlike a keyboard, the
+stick already IS the speed control, so it should not additionally need
+Shift/cl_run held to reach full run, and should not have a keyboard-only
+decision fight it on a gamepad-only frame.
+=================
+*/
+static void CL_AuroraGamepadMove( usercmd_t *cmd ) {
+	int forward, right;
+	qboolean walking;
+
+	if ( !Aurora_Gamepad_GetMove( &forward, &right, &walking ) ) {
+		return;
+	}
+
+	cmd->forwardmove = ClampChar( cmd->forwardmove + forward );
+	cmd->rightmove = ClampChar( cmd->rightmove + right );
+
+	if ( walking ) {
+		cmd->buttons |= BUTTON_WALKING;
+	} else {
+		cmd->buttons &= ~BUTTON_WALKING;
+	}
+}
+#endif
+
 /*
 =================
 CL_MouseMove
@@ -695,6 +754,12 @@ usercmd_t CL_CreateCmd( void ) {
 
 	// get basic movement from joystick
 	CL_JoystickMove( &cmd );
+
+#ifdef AURORA
+	// get analog movement from the Aurora gamepad's left stick - not part
+	// of CL_JoystickMove above, see CL_AuroraGamepadMove's comment for why.
+	CL_AuroraGamepadMove( &cmd );
+#endif
 
 	// check to make sure the angles haven't wrapped
 	if ( cl.viewangles[PITCH] - oldAngles[PITCH] > 90 ) {
