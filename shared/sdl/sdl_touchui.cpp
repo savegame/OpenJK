@@ -93,8 +93,6 @@ typedef enum {
 	TB_FORCE_PREV,	// bottom centre, one-shot - forceprev
 	TB_FORCE_USE,	// bottom centre, held like fire - +useforce/-useforce
 	TB_FORCE_NEXT,	// bottom centre, one-shot - forcenext
-	TB_ROLL,		// held like crouch, own +movedown/-movedown key id -
-					// see touchButtons[]'s comment on TB_ROLL
 	TB_COUNT
 } touchButtonIndex_t;
 
@@ -201,7 +199,7 @@ static touchButton_t touchButtons[TB_COUNT] = {
 	// IN_KeyDown/IN_KeyUp track this button in its own down[] slot
 	// (cl_input.cpp:163-197's down[0]/down[1] reference counting), so
 	// releasing either button only ever clears its own slot.
-	{ "+movedown 2\n", "-movedown 2\n", AURORA_TOUCH_ICON_ROLL, NULL, 0, 0 },
+	// { "+movedown 2\n", "-movedown 2\n", AURORA_TOUCH_ICON_ROLL, NULL, 0, 0 },
 };
 
 // ---------------------------------------------------------------------------
@@ -538,8 +536,8 @@ static void Aurora_TouchUI_Layout( void )
 	// (right) at any reasonable screen size - see the layout comment atop
 	// this function for why edges stay clear (margin) the same way.
 	touchButtons[TB_FORCE_USE].radiusMm = smallMm * 0.5f;
-	touchButtons[TB_FORCE_USE].cx = visualWmm * 0.5f;
-	touchButtons[TB_FORCE_USE].cy = bottom - smallMm * 0.5f;
+	touchButtons[TB_FORCE_USE].cx = touchButtons[TB_CROUCH].cx - gapMm - smallMm;
+	touchButtons[TB_FORCE_USE].cy = touchButtons[TB_CROUCH].cy;
 
 	touchButtons[TB_FORCE_PREV].radiusMm = smallMm * 0.5f;
 	touchButtons[TB_FORCE_PREV].cx = touchButtons[TB_FORCE_USE].cx - smallMm - gapMm;
@@ -548,12 +546,6 @@ static void Aurora_TouchUI_Layout( void )
 	touchButtons[TB_FORCE_NEXT].radiusMm = smallMm * 0.5f;
 	touchButtons[TB_FORCE_NEXT].cx = touchButtons[TB_FORCE_USE].cx + smallMm + gapMm;
 	touchButtons[TB_FORCE_NEXT].cy = touchButtons[TB_FORCE_USE].cy;
-
-	// Roll (see touchButtons[]'s TB_ROLL comment) - one button-width to
-	// the left of CROUCH, same row, so the two read as related controls.
-	touchButtons[TB_ROLL].radiusMm = smallMm * 0.5f;
-	touchButtons[TB_ROLL].cx = touchButtons[TB_CROUCH].cx - gapMm - smallMm;
-	touchButtons[TB_ROLL].cy = touchButtons[TB_CROUCH].cy;
 }
 
 /*
