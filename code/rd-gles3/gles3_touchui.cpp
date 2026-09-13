@@ -90,12 +90,14 @@ void Aurora_TouchUI_Draw( void )
 	}
 	for ( i = 0; i < frame.numButtons; i++ )
 	{
-		frame.buttons[i].x       = aurora_touchOverlay.buttons[i].x;
-		frame.buttons[i].y       = aurora_touchOverlay.buttons[i].y;
-		frame.buttons[i].radius  = aurora_touchOverlay.buttons[i].radius;
-		frame.buttons[i].icon    = aurora_touchOverlay.buttons[i].icon;
-		frame.buttons[i].label   = aurora_touchOverlay.buttons[i].label;
-		frame.buttons[i].pressed = aurora_touchOverlay.buttons[i].pressed;
+		frame.buttons[i].x          = aurora_touchOverlay.buttons[i].x;
+		frame.buttons[i].y          = aurora_touchOverlay.buttons[i].y;
+		frame.buttons[i].radius     = aurora_touchOverlay.buttons[i].radius;
+		frame.buttons[i].halfWidth  = aurora_touchOverlay.buttons[i].halfWidth;
+		frame.buttons[i].halfHeight = aurora_touchOverlay.buttons[i].halfHeight;
+		frame.buttons[i].icon       = aurora_touchOverlay.buttons[i].icon;
+		frame.buttons[i].label      = aurora_touchOverlay.buttons[i].label;
+		frame.buttons[i].pressed    = aurora_touchOverlay.buttons[i].pressed;
 	}
 
 	frame.stick       = aurora_touchOverlay.stick;

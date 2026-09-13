@@ -117,8 +117,11 @@ typedef struct {
 	float		lookLastX, lookLastY;	// WINDOW px, last processed point for this finger
 	float		lookRemX, lookRemY;		// sub-pixel carry, mirrors touchPad.remX/Y
 
-	// layout, VISUAL mm (see Aurora_TouchUI_Layout) - centre + radius
+	// layout, VISUAL mm (see Aurora_TouchUI_Layout) - centre, plus either a
+	// circle radius (icon button, label == NULL) or a capsule's half-
+	// extents (text button, label != NULL - see Aurora_TouchUI_CapsuleWidthMm).
 	float		cx, cy, radiusMm;
+	float		capHalfWMm, capHalfHMm;
 } touchButton_t;
 
 static touchButton_t touchButtons[TB_COUNT] = {
@@ -167,19 +170,21 @@ static struct {
 } touchPad;
 
 // ---------------------------------------------------------------------------
-// cinematic skip (port task B-003) - top-left, the same slot the menu
-// button occupies during normal gameplay (see Aurora_TouchUI_Layout: laid
-// out right after TB_MENU, same centre/radius). A separate control, not an
-// entry in touchButtons[]: it has no +/- command pair, no held/latch state
-// worth keeping between frames, and its action depends on WHICH kind of
-// cinematic is currently playing, decided at press time (see
-// Aurora_TouchUI_SkipCinematic) rather than a fixed command string.
+// cinematic skip (port task B-003) - top-left, the same corner the menu
+// button occupies during normal gameplay (its top-left EDGE, not its
+// centre, is what actually lines up - see Aurora_TouchUI_Layout: laid out
+// right after TB_MENU). A separate control, not an entry in touchButtons[]:
+// it has no +/- command pair, no held/latch state worth keeping between
+// frames, and its action depends on WHICH kind of cinematic is currently
+// playing, decided at press time (see Aurora_TouchUI_SkipCinematic) rather
+// than a fixed command string.
 // ---------------------------------------------------------------------------
 
 static struct {
 	int				held;
 	SDL_FingerID	finger;
-	float			cx, cy, radiusMm;	// VISUAL mm - mirrors touchButtons[TB_MENU]
+	float			cx, cy;				// VISUAL mm, capsule centre
+	float			capHalfWMm, capHalfHMm;	// VISUAL mm, capsule half-extents
 } touchSkip;
 
 // ---------------------------------------------------------------------------
@@ -312,6 +317,36 @@ static void Aurora_TouchUI_VisualToWindow( float vx, float vy, int windowW, int 
 	*wy = wy2 + (float)windowH * 0.5f;
 }
 
+// A word in capitals is guessed at half its em height wide per letter, an
+// 'I' a quarter - erring on the wide side on purpose, so whatever the
+// renderer's real font metrics come out to (Aurora_TouchUI_AddLabel,
+// gles3_touchui_draw.cpp) never overflows the capsule this lays out from
+// the estimate. This module cannot ask the renderer for the real width:
+// its ImGui font lives in the rd-gles3 module, a separate SHARED library
+// the client Sys_LoadDll's, not something this file can call into
+// (research/touch_ui_research.md п.5) - same reasoning as the reference
+// this look is matched to, quake4es
+// (renderer/TouchOverlay.h's TouchOverlay_TextWidth/CapsuleWidth), which
+// hit the identical constraint and settled on the identical estimate.
+#define AURORA_TOUCH_FONT_HEIGHT_FRACTION	0.5f	// of the capsule's height
+#define AURORA_TOUCH_TEXT_PADDING_FRACTION	0.45f	// per side, of the capsule's height
+
+static float Aurora_TouchUI_TextWidthMm( const char *text, float fontHeightMm )
+{
+	float width = 0.0f;
+
+	for ( ; *text; text++ )
+	{
+		width += ( *text == 'I' ) ? 0.25f * fontHeightMm : 0.5f * fontHeightMm;
+	}
+	return width;
+}
+
+static float Aurora_TouchUI_CapsuleWidthMm( const char *text, float heightMm )
+{
+	return Aurora_TouchUI_TextWidthMm( text, AURORA_TOUCH_FONT_HEIGHT_FRACTION * heightMm ) + 2.0f * AURORA_TOUCH_TEXT_PADDING_FRACTION * heightMm;
+}
+
 /*
 =================
 Aurora_TouchUI_Layout
@@ -370,28 +405,41 @@ static void Aurora_TouchUI_Layout( void )
 	touchButtons[TB_MENU].cx = margin + smallMm * 0.5f;
 	touchButtons[TB_MENU].cy = margin + smallMm * 0.5f;
 
-	// The cinematic-skip control (port task B-003) takes over the menu
-	// button's exact slot whenever it is shown (Aurora_TouchUI_Frame only
-	// ever sends one or the other, never both - see
-	// Aurora_TouchUI_CinematicSkippable) - "слева вверху", same corner,
-	// same size.
-	touchSkip.cx = touchButtons[TB_MENU].cx;
-	touchSkip.cy = touchButtons[TB_MENU].cy;
-	touchSkip.radiusMm = touchButtons[TB_MENU].radiusMm;
-
-	// Top-centre: quicksave/quickload (port task B-003), bigger than the
-	// small utility buttons so a 4-letter word stays readable, flanking the
-	// visual midline clear of both the menu button (top-left) and USE
-	// (top-right, laid out below) at any reasonable screen width.
+	// SAVE/LOAD/SKIP (port task B-003) are capsules, not circles - as wide
+	// as their word needs (Aurora_TouchUI_CapsuleWidthMm), matching the
+	// look of the reference quake4es port (~/Projects/aurora-ports/quake4/
+	// quake4es, renderer/TouchOverlay.h + sys/sdl/touch_ui.cpp) the user
+	// asked to match pixel-for-shape. All three share one height so they
+	// read as the same kind of control wherever they appear.
 	{
-		const float textRadiusMm = sizeMm * 0.65f;
+		const float capHmm = smallMm * 0.7f;
+		float skipWmm, saveWmm, loadWmm;
 
-		touchButtons[TB_SAVE].radiusMm = textRadiusMm;
-		touchButtons[TB_SAVE].cx = visualWmm * 0.5f - textRadiusMm - gapMm * 0.5f;
-		touchButtons[TB_SAVE].cy = margin + smallMm * 0.5f;
+		// The cinematic-skip control takes over the menu button's corner
+		// whenever it is shown (Aurora_TouchUI_Frame only ever sends one or
+		// the other, never both - see Aurora_TouchUI_CinematicSkippable) -
+		// "слева вверху", same top-left EDGE the menu button's circle
+		// touches, sized for its own word rather than the menu icon's circle.
+		skipWmm = Aurora_TouchUI_CapsuleWidthMm( "SKIP", capHmm );
+		touchSkip.capHalfWMm = skipWmm * 0.5f;
+		touchSkip.capHalfHMm = capHmm * 0.5f;
+		touchSkip.cx = margin + skipWmm * 0.5f;
+		touchSkip.cy = margin + capHmm * 0.5f;
 
-		touchButtons[TB_LOAD].radiusMm = textRadiusMm;
-		touchButtons[TB_LOAD].cx = visualWmm * 0.5f + textRadiusMm + gapMm * 0.5f;
+		// Top-centre: flanking the visual midline, clear of both the menu
+		// button (top-left) and USE (top-right, laid out below) at any
+		// reasonable screen width.
+		saveWmm = Aurora_TouchUI_CapsuleWidthMm( "SAVE", capHmm );
+		loadWmm = Aurora_TouchUI_CapsuleWidthMm( "LOAD", capHmm );
+
+		touchButtons[TB_SAVE].capHalfWMm = saveWmm * 0.5f;
+		touchButtons[TB_SAVE].capHalfHMm = capHmm * 0.5f;
+		touchButtons[TB_SAVE].cx = visualWmm * 0.5f - gapMm * 0.5f - saveWmm * 0.5f;
+		touchButtons[TB_SAVE].cy = margin + capHmm * 0.5f;
+
+		touchButtons[TB_LOAD].capHalfWMm = loadWmm * 0.5f;
+		touchButtons[TB_LOAD].capHalfHMm = capHmm * 0.5f;
+		touchButtons[TB_LOAD].cx = visualWmm * 0.5f + gapMm * 0.5f + loadWmm * 0.5f;
 		touchButtons[TB_LOAD].cy = touchButtons[TB_SAVE].cy;
 	}
 
@@ -728,6 +776,25 @@ static void Aurora_TouchUI_PadMove( float windowX, float windowY )
 
 /*
 =================
+Aurora_TouchUI_ButtonHit
+
+A capsule (label != NULL) hit-tests as its rectangle; an icon button
+(label == NULL) as its circle, same as always. dx/dy are the touch point
+relative to the button's centre, both in VISUAL mm (the same space
+Aurora_TouchUI_Layout laid the button out in).
+=================
+*/
+static int Aurora_TouchUI_ButtonHit( const touchButton_t *b, float dx, float dy )
+{
+	if ( b->label )
+	{
+		return fabsf( dx ) <= b->capHalfWMm && fabsf( dy ) <= b->capHalfHMm;
+	}
+	return dx * dx + dy * dy <= b->radiusMm * b->radiusMm;
+}
+
+/*
+=================
 Aurora_TouchUI_FingerEvent
 =================
 */
@@ -776,7 +843,7 @@ void Aurora_TouchUI_FingerEvent( const SDL_Event *ev )
 		{
 			float dx = vx - touchSkip.cx, dy = vy - touchSkip.cy;
 
-			if ( dx * dx + dy * dy <= touchSkip.radiusMm * touchSkip.radiusMm )
+			if ( fabsf( dx ) <= touchSkip.capHalfWMm && fabsf( dy ) <= touchSkip.capHalfHMm )
 			{
 				touchSkip.held = 1;
 				touchSkip.finger = finger.fingerId;
@@ -832,7 +899,7 @@ void Aurora_TouchUI_FingerEvent( const SDL_Event *ev )
 			float dx = vx - b->cx, dy = vy - b->cy;
 
 			if ( b->held ) continue;
-			if ( dx * dx + dy * dy > b->radiusMm * b->radiusMm ) continue;
+			if ( !Aurora_TouchUI_ButtonHit( b, dx, dy ) ) continue;
 
 			Aurora_TouchUI_PressButton( b, finger.fingerId );
 
@@ -1058,7 +1125,8 @@ void Aurora_TouchUI_Frame( void )
 
 			overlay.buttons[0].x = wx;
 			overlay.buttons[0].y = wy;
-			overlay.buttons[0].radius = touchSkip.radiusMm * touchPixelsPerMm;
+			overlay.buttons[0].halfWidth = touchSkip.capHalfWMm * touchPixelsPerMm;
+			overlay.buttons[0].halfHeight = touchSkip.capHalfHMm * touchPixelsPerMm;
 			overlay.buttons[0].label = "SKIP";
 			overlay.buttons[0].pressed = touchSkip.held;
 		}
@@ -1115,6 +1183,8 @@ void Aurora_TouchUI_Frame( void )
 		overlay.buttons[i].x = wx;
 		overlay.buttons[i].y = wy;
 		overlay.buttons[i].radius = b->radiusMm * touchPixelsPerMm;
+		overlay.buttons[i].halfWidth = b->capHalfWMm * touchPixelsPerMm;
+		overlay.buttons[i].halfHeight = b->capHalfHMm * touchPixelsPerMm;
 		overlay.buttons[i].icon = b->icon;
 		overlay.buttons[i].label = b->label;
 		overlay.buttons[i].pressed = b->held || b->latched;

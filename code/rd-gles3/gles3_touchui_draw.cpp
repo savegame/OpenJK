@@ -273,8 +273,11 @@ shape people already know (save/load/skip - port task B-003; the rest of
 the overlay keeps its procedural icons, see gles3_touchui_draw.h's comment
 on `label`). Uses ImGui's own default font (already loaded for
 Aurora_TouchUI_EnsureInit's font-atlas requirement, see that function's
-comment) at a size derived from the button's on-screen diameter - no extra
-font baking needed for four short, all-caps words.
+comment) at a size derived from the CAPSULE's inner height (`height`,
+already ring-inset by the caller) - no extra font baking needed for four
+short, all-caps words. 0.55 is picked to sit comfortably inside a capsule
+built by Aurora_TouchUI_CapsuleWidthMm's 0.5-of-height/0.45-of-height-per-
+side estimate (sdl_touchui.cpp) without touching the rounded ends.
 
 Orientation: AddText() always lays glyph quads out upright in the CURRENT
 draw-list space, which for every OTHER primitive in this file is window
@@ -287,12 +290,14 @@ so instead: lay the word out centred on `c` UNROTATED first (cheapest to
 size/position correctly), then rotate just the vertices AddText() appended
 (a pure rigid rotation about `c`, same 4-case table as every other shape
 here) - equivalent end result, one extra pass over a handful of quads.
+Shared with Aurora_TouchUI_AddCapsule, which rotates the capsule's own
+rectangle the identical way so the whole button turns as one rigid piece.
 ====================
 */
-static void Aurora_TouchUI_AddLabel( ImDrawList *list, const ImVec2 &c, float diameter, ImU32 color, const char *label, int transform )
+static void Aurora_TouchUI_AddLabel( ImDrawList *list, const ImVec2 &c, float height, ImU32 color, const char *label, int transform )
 {
 	ImFont *font = ImGui::GetFont();
-	float fontSize = diameter * 0.32f;
+	float fontSize = height * 0.55f;
 	ImVec2 textSize, pos;
 	int vtx0;
 
@@ -321,6 +326,54 @@ static void Aurora_TouchUI_AddLabel( ImDrawList *list, const ImVec2 &c, float di
 
 /*
 ====================
+Aurora_TouchUI_AddCapsule
+
+SAVE/LOAD/SKIP (port task B-003 - matching the look of the reference
+quake4es port, ~/Projects/aurora-ports/quake4/quake4es: a word on a
+rounded-rect capsule as wide as it needs, not a circle - see
+renderer/TouchOverlay.h's TouchOverlay_CapsuleWidth and
+renderer/imgui/r_touch.cpp's RB_TouchOverlay_Build there). halfWidth/
+halfHeight are the VISUAL-local, pre-rotation box (see
+gles3_touchui_draw.h's comment on `label`) - built straight (unrotated,
+long axis along local X) around `c` first, exactly like
+Aurora_TouchUI_AddLabel does for the word inside it, then the handful of
+vertices AddRectFilled()/AddRect() just emitted are rotated about `c` by
+the same table every other shape here uses. That is the only way to get
+a rotated rounded rect out of ImGui: AddRectFilled/AddRect always draw
+axis-aligned in the current draw-list space, there is no "draw this
+already turned" primitive - so this is the same "draw straight, then
+rotate the emitted vertices" trick as the label text, just for the box
+instead of the glyphs, so the two rotate together as one rigid button.
+====================
+*/
+static void Aurora_TouchUI_AddCapsule( ImDrawList *list, const ImVec2 &c, float halfWidth, float halfHeight, ImU32 fill, ImU32 edge, ImU32 textColor, float ring, const char *label, int transform )
+{
+	const ImVec2 min( c.x - halfWidth + ring * 0.5f, c.y - halfHeight + ring * 0.5f );
+	const ImVec2 max( c.x + halfWidth - ring * 0.5f, c.y + halfHeight - ring * 0.5f );
+	const float rounding = ( max.y - min.y ) * 0.5f;
+	const int vtx0 = list->VtxBuffer.Size;
+
+	list->AddRectFilled( min, max, fill, rounding );
+	list->AddRect( min, max, edge, rounding, ImDrawFlags_None, ring );
+
+	if ( transform != 0 )
+	{
+		for ( int i = vtx0; i < list->VtxBuffer.Size; i++ )
+		{
+			ImDrawVert &v = list->VtxBuffer[i];
+			float rx, ry;
+
+			Aurora_TouchUI_RotateOffset( v.pos.x - c.x, v.pos.y - c.y, transform, &rx, &ry );
+			v.pos.x = c.x + rx;
+			v.pos.y = c.y + ry;
+		}
+	}
+
+	Aurora_TouchUI_AddLabel( list, c, max.y - min.y, textColor, label, transform );
+}
+
+/*
+====================
 Aurora_TouchUI_Build
 ====================
 */
@@ -341,16 +394,18 @@ static void Aurora_TouchUI_Build( ImDrawList *list, const AuroraTouchDrawFrame *
 			? Aurora_TouchColor( 255, 255, 255, alpha )
 			: Aurora_TouchColor( 255, 255, 255, alpha * 0.7f );
 		const ImU32 content = Aurora_TouchColor( 255, 255, 255, alpha * 0.95f );
-		const float r = ( b.radius - ring * 0.5f > 1.0f ) ? b.radius - ring * 0.5f : 1.0f;
 
-		list->AddCircleFilled( c, r, fill );
-		list->AddCircle( c, r, edge, 0, ring );
 		if ( b.label )
 		{
-			Aurora_TouchUI_AddLabel( list, c, r * 2.0f, content, b.label, frame->transform );
+			Aurora_TouchUI_AddCapsule( list, c, b.halfWidth, b.halfHeight, fill, edge, content, ring, b.label, frame->transform );
+			continue;
 		}
-		else
+
 		{
+			const float r = ( b.radius - ring * 0.5f > 1.0f ) ? b.radius - ring * 0.5f : 1.0f;
+
+			list->AddCircleFilled( c, r, fill );
+			list->AddCircle( c, r, edge, 0, ring );
 			Aurora_TouchIcon( list, b.icon, c, r * 0.6f, content, stroke, frame->transform );
 		}
 	}

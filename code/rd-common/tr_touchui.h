@@ -56,14 +56,17 @@ along with OpenJK; if not, see <http://www.gnu.org/licenses/>.
 #define AURORA_TOUCH_MAX_BUTTONS 8
 
 typedef struct {
-	float				x, y;			// window px, circle centre
-	float				radius;			// window px
+	float				x, y;			// window px, centre
+	float				radius;			// window px - circle radius, used when label == NULL
+	float				halfWidth;		// window px - capsule half-extents (VISUAL-local, i.e.
+	float				halfHeight;		// pre-rotation - see gles3_touchui_draw.h), used when label != NULL
 	auroraTouchIcon_t	icon;			// ignored by the renderer when label != NULL
-	const char			*label;			// NULL: draw `icon` (procedural glyph), as before.
-										// Non-NULL: draw this text, centred, instead - a
-										// static string literal (e.g. "SAVE"/"LOAD"/"SKIP"),
-										// so the pointer stays valid forever with no lifetime
-										// tie to any per-frame buffer (port task B-003).
+	const char			*label;			// NULL: draw `icon` as a circle (procedural glyph), as
+										// before. Non-NULL: draw a rounded-rect capsule sized
+										// to halfWidth/halfHeight instead, this text centred in
+										// it - a static string literal (e.g. "SAVE"/"LOAD"/
+										// "SKIP"), so the pointer stays valid forever with no
+										// lifetime tie to any per-frame buffer (port task B-003).
 	int					pressed;		// 1 while a finger holds it (or it is latched)
 } auroraTouchButton_t;
 

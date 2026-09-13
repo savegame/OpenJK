@@ -52,15 +52,20 @@ along with OpenJK; if not, see <http://www.gnu.org/licenses/>.
 #define AURORA_TOUCH_DRAW_MAX_BUTTONS 8
 
 typedef struct {
-	float				x, y, radius;	// window px
+	float				x, y, radius;	// window px - radius used when label == NULL (icon circle)
+	float				halfWidth;		// window px - capsule half-extents (VISUAL-local, i.e.
+	float				halfHeight;		// pre-rotation - the renderer rotates the quad itself,
+										// see Aurora_TouchUI_AddCapsule), used when label != NULL
 	auroraTouchIcon_t	icon;			// ignored when label != NULL
-	const char			*label;			// NULL: procedural icon glyph (as before). Non-NULL:
-										// centred text instead (SAVE/LOAD/SKIP, port task B-003)
-										// - see Aurora_TouchUI_AddLabel in the .cpp for how this
-										// still gets the same per-orientation rotation treatment
-										// as icon shapes (rotating the already-laid-out glyph
-										// quads about the button centre, not the glyphs' own
-										// baked pixels).
+	const char			*label;			// NULL: procedural icon glyph on a circle (as before).
+										// Non-NULL: a rounded-rect capsule sized to halfWidth/
+										// halfHeight, this text centred in it (SAVE/LOAD/SKIP,
+										// port task B-003) - see Aurora_TouchUI_AddCapsule in
+										// the .cpp for how both the capsule shape and the text
+										// inside it get the same per-orientation rotation
+										// treatment icon shapes already use (rotating the
+										// already-laid-out quad/glyph vertices about the button
+										// centre, not the shapes' own local definitions).
 	int					pressed;
 } AuroraTouchButtonDraw;
 
