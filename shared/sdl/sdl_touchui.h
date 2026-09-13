@@ -58,6 +58,23 @@ void Aurora_TouchUI_NotePhysicalInput( void );
 // gamepad is currently connected.
 void Aurora_TouchUI_NoteJoystickChange( void );
 
+// The virtual stick's continuous move, exactly mirroring
+// Aurora_Gamepad_GetMove (shared/sdl/sdl_gamepad.h) - called once per
+// usercmd from CL_AuroraTouchMove() (code/client/cl_input.cpp), NOT from
+// anywhere in this module's own per-frame polling.
+//
+// Returns qfalse (leaving *forwardmove/*rightmove/*walking untouched) when
+// no finger currently holds the stick, or it is inside its dead zone - so
+// the caller only ever touches cmd/BUTTON_WALKING when the stick actually
+// wants to say something, never fighting a keyboard/gamepad-only frame.
+//
+// On qtrue: *forwardmove/*rightmove are -127..127, dead-zone-rescaled and
+// (per cl_touchUIStickCurve) curve-shaped, ready to add onto usercmd_t's
+// own fields the same way CL_AuroraGamepadMove does; *walking follows the
+// same fixed fraction as the gamepad's left stick
+// (AURORA_STICK_RUN_FRACTION, shared/sdl/sdl_stickmath.h).
+qboolean Aurora_TouchUI_GetMove( int *forwardmove, int *rightmove, qboolean *walking );
+
 // ---------------------------------------------------------------------------
 // Implemented in sdl_input.cpp, used by sdl_touchui.cpp: both are compiled
 // into the same client binary (no dlopen boundary here, unlike the

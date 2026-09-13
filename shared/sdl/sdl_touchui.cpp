@@ -58,6 +58,7 @@ along with OpenJK; if not, see <http://www.gnu.org/licenses/>.
 #include "client/client.h"
 #include "sys/sys_local.h"
 #include "sdl_touchui.h"
+#include "sdl_stickmath.h"
 
 #ifdef AURORA
 
@@ -73,6 +74,7 @@ static cvar_t *cl_touchUIButtonSize;		// mm, action button diameter
 static cvar_t *cl_touchUIEdgeMargin;		// mm, kept clear of Aurora's edge gestures
 static cvar_t *cl_touchUIStickRadius;		// mm, stick travel to reach full deflection
 static cvar_t *cl_touchUIStickDeadZone;	// mm
+static cvar_t *cl_touchUIStickCurve;		// 0 linear, 1 quadratic response, stick move magnitude only
 static cvar_t *cl_touchUILookSpeed;		// mouse units per mm the camera-pad finger travels
 
 // ---------------------------------------------------------------------------
@@ -130,7 +132,15 @@ static struct {
 	SDL_FingerID	finger;
 	float			baseX, baseY;	// VISUAL mm, where the finger landed
 	float			curX, curY;		// VISUAL mm, current finger position (clamped to radius for the knob)
+
+	// Analog move - dead-zone-rescaled and (per cl_touchUIStickCurve)
+	// curve-shaped by the shared Aurora_Stick_Radial (sdl_stickmath.h),
+	// exactly like the gamepad's left stick (sdl_gamepad.cpp). Read once
+	// per usercmd by Aurora_TouchUI_GetMove(), not applied here - this
+	// struct only tracks the finger, it never touches usercmd_t itself.
 	float			side, forward;	// -1..1, movement axes
+	float			magnitude;		// 0..1, same rescale, direction-independent
+	qboolean		active;			// side/forward/magnitude past the dead zone
 } touchStick;
 
 static struct {
@@ -444,7 +454,8 @@ static void Aurora_TouchUI_PressButton( touchButton_t *b, SDL_FingerID finger )
 static void Aurora_TouchUI_StickStop( void )
 {
 	touchStick.held = 0;
-	touchStick.side = touchStick.forward = 0.0f;
+	touchStick.side = touchStick.forward = touchStick.magnitude = 0.0f;
+	touchStick.active = qfalse;
 }
 
 static void Aurora_TouchUI_StickMove( float vx, float vy )
@@ -459,46 +470,18 @@ static void Aurora_TouchUI_StickMove( float vx, float vy )
 	{
 		dx *= radiusMm / len;
 		dy *= radiusMm / len;
-		len = radiusMm;
 	}
 	touchStick.curX = touchStick.baseX + dx;
 	touchStick.curY = touchStick.baseY + dy;
 
-	if ( len <= deadMm )
-	{
-		touchStick.side = touchStick.forward = 0.0f;
-		return;
-	}
-
-	{
-		const float scale = ( len - deadMm ) / ( radiusMm - deadMm ) / len;
-		touchStick.side = dx * scale;
-		touchStick.forward = -dy * scale;	// screen-down is negative forward
-	}
-}
-
-// Discretizes the analog stick into the engine's real movement actions
-// (+forward/+back/+moveleft/+moveright - never emulated keys, see the file
-// comment) - up to 8-directional, edge-triggered so each command is sent
-// exactly once per press/release rather than every frame.
-static void Aurora_TouchUI_StickApply( void )
-{
-	static int wasForward = 0, wasBack = 0, wasLeft = 0, wasRight = 0;
-	const float threshold = 0.35f;
-	int forward = touchStick.held && touchStick.forward >  threshold;
-	int back    = touchStick.held && touchStick.forward < -threshold;
-	int left    = touchStick.held && touchStick.side    < -threshold;
-	int right   = touchStick.held && touchStick.side    >  threshold;
-
-	if ( forward != wasForward ) Cbuf_ExecuteText( EXEC_APPEND, forward ? "+forward\n" : "-forward\n" );
-	if ( back    != wasBack    ) Cbuf_ExecuteText( EXEC_APPEND, back    ? "+back\n"    : "-back\n" );
-	if ( left    != wasLeft    ) Cbuf_ExecuteText( EXEC_APPEND, left    ? "+moveleft\n"  : "-moveleft\n" );
-	if ( right   != wasRight   ) Cbuf_ExecuteText( EXEC_APPEND, right   ? "+moveright\n" : "-moveright\n" );
-
-	wasForward = forward;
-	wasBack = back;
-	wasLeft = left;
-	wasRight = right;
+	// Normalize to the stick's own travel radius (radiusMm == full
+	// deflection) and reuse the exact radial dead-zone + curve math the
+	// gamepad's left stick uses (Aurora_Stick_Radial, sdl_stickmath.h) -
+	// the dead zone expressed as a fraction of that same radius; screen-
+	// down is negative forward.
+	touchStick.active = Aurora_Stick_Radial( dx / radiusMm, -dy / radiusMm, deadMm / radiusMm,
+		(qboolean)cl_touchUIStickCurve->integer,
+		&touchStick.side, &touchStick.forward, &touchStick.magnitude );
 }
 
 /*
@@ -680,7 +663,8 @@ void Aurora_TouchUI_FingerEvent( const SDL_Event *ev )
 					touchStick.finger = finger.fingerId;
 					touchStick.baseX = touchStick.curX = vx;
 					touchStick.baseY = touchStick.curY = vy;
-					touchStick.side = touchStick.forward = 0.0f;
+					touchStick.side = touchStick.forward = touchStick.magnitude = 0.0f;
+					touchStick.active = qfalse;
 				}
 			}
 			else
@@ -799,6 +783,31 @@ void Aurora_TouchUI_NoteJoystickChange( void )
 
 /*
 =================
+Aurora_TouchUI_GetMove
+
+Mirrors Aurora_Gamepad_GetMove (sdl_gamepad.cpp) exactly - see
+sdl_touchui.h for the contract. touchStick.side/forward/magnitude are
+already dead-zone-rescaled and curve-shaped by Aurora_Stick_Radial as of
+the last SDL_FINGERMOTION (Aurora_TouchUI_StickMove above); a finger held
+still between motion events keeps reporting that same value every frame,
+exactly like a physical stick held at a fixed deflection would.
+=================
+*/
+qboolean Aurora_TouchUI_GetMove( int *forwardmove, int *rightmove, qboolean *walking )
+{
+	if ( !touchStick.held || !touchStick.active )
+	{
+		return qfalse;
+	}
+
+	*forwardmove = (int)( touchStick.forward * 127.0f );
+	*rightmove = (int)( touchStick.side * 127.0f );
+	*walking = (qboolean)( touchStick.magnitude < AURORA_STICK_RUN_FRACTION );
+	return qtrue;
+}
+
+/*
+=================
 Aurora_TouchUI_Frame
 =================
 */
@@ -833,8 +842,6 @@ void Aurora_TouchUI_Frame( void )
 		}
 		return;
 	}
-
-	Aurora_TouchUI_StickApply();
 
 	Com_Memset( &overlay, 0, sizeof( overlay ) );
 	overlay.windowWidth = windowW;
@@ -897,6 +904,8 @@ void Aurora_TouchUI_Init( void )
 	Cvar_CheckRange( cl_touchUIStickRadius, 4.0f, 40.0f, qfalse );
 	cl_touchUIStickDeadZone = Cvar_Get( "cl_touchUIStickDeadZone", "1.5", CVAR_ARCHIVE );
 	Cvar_CheckRange( cl_touchUIStickDeadZone, 0.0f, 10.0f, qfalse );
+	cl_touchUIStickCurve = Cvar_Get( "cl_touchUIStickCurve", "1", CVAR_ARCHIVE );
+	Cvar_CheckRange( cl_touchUIStickCurve, 0.0f, 1.0f, qtrue );
 	cl_touchUILookSpeed = Cvar_Get( "cl_touchUILookSpeed", "32", CVAR_ARCHIVE );
 	Cvar_CheckRange( cl_touchUILookSpeed, 1.0f, 200.0f, qfalse );
 
@@ -934,5 +943,6 @@ void Aurora_TouchUI_Frame( void ) {}
 void Aurora_TouchUI_FingerEvent( const SDL_Event *ev ) {}
 void Aurora_TouchUI_NotePhysicalInput( void ) {}
 void Aurora_TouchUI_NoteJoystickChange( void ) {}
+qboolean Aurora_TouchUI_GetMove( int *forwardmove, int *rightmove, qboolean *walking ) { return qfalse; }
 
 #endif // AURORA

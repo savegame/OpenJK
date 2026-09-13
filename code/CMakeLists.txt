@@ -378,6 +378,11 @@ if(BuildSPEngine OR BuildJK2SPEngine)
 		# dual-stick layout, a module of its own next to sdl_touchui.
 		"${SharedDir}/sdl/sdl_gamepad.h"
 		"${SharedDir}/sdl/sdl_gamepad.cpp"
+		# Shared analog-stick dead zone/curve math, header-only - used by
+		# both sdl_gamepad.cpp's left stick and sdl_touchui.cpp's virtual
+		# stick, see the file itself for why it lives here instead of in
+		# either module.
+		"${SharedDir}/sdl/sdl_stickmath.h"
 		)
 
 	if(WIN32)

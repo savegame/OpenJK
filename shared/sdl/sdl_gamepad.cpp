@@ -34,6 +34,7 @@ along with OpenJK; if not, see <http://www.gnu.org/licenses/>.
 #include "client/client.h"
 #include "sys/sys_local.h"
 #include "sdl_gamepad.h"
+#include "sdl_stickmath.h"
 
 #ifdef AURORA
 
@@ -166,11 +167,11 @@ static void Aurora_Gamepad_Triggers( void )
 // left stick -> analog move (primary path) + four digital direction slots
 // (optional fallback/rebind target only - see sdl_gamepad.h).
 //
-// Analog state is computed radially, the same shape as the right stick's
-// look code below: dead zone and (optional) response curve are applied to
-// the stick's magnitude so a diagonal push isn't shortchanged by a square
-// dead zone, then the rescaled unit vector is stored for
-// Aurora_Gamepad_GetMove() to hand to CL_AuroraGamepadMove()
+// Analog state is computed radially via the shared Aurora_Stick_Radial()
+// (sdl_stickmath.h) - the same dead zone + (optional) response curve math
+// the touch-UI's virtual stick uses (sdl_touchui.cpp) - so a diagonal push
+// isn't shortchanged by a square dead zone, then the rescaled unit vector
+// is stored for Aurora_Gamepad_GetMove() to hand to CL_AuroraGamepadMove()
 // (code/client/cl_input.cpp) once per usercmd - this module only computes
 // the numbers, it never touches usercmd_t itself.
 //
@@ -187,7 +188,7 @@ static qboolean moveActive;			// mag was past the dead zone this frame
 
 static void Aurora_Gamepad_LeftStick( void )
 {
-	float lx, ly, side, forward, dz, mag, t;
+	float lx, ly, side, forward, dz;
 
 	lx = SDL_GameControllerGetAxis( gamepad, SDL_CONTROLLER_AXIS_LEFTX ) / 32767.0f;
 	ly = SDL_GameControllerGetAxis( gamepad, SDL_CONTROLLER_AXIS_LEFTY ) / 32767.0f;
@@ -201,46 +202,12 @@ static void Aurora_Gamepad_LeftStick( void )
 	Aurora_Gamepad_SetJoy( JOY_LEFTSTICK_LEFT,  (qboolean)( side    < -dz ) );
 	Aurora_Gamepad_SetJoy( JOY_LEFTSTICK_RIGHT, (qboolean)( side    >  dz ) );
 
-	mag = sqrtf( side * side + forward * forward );
-	if ( mag < dz )
-	{
-		moveForward = moveRight = moveMagnitude = 0.0f;
-		moveActive = qfalse;
-		return;
-	}
-
-	// t in (0,1]: how far past the dead zone the stick is deflected -
-	// identical rescale to Aurora_Gamepad_RightStick() below, so response
-	// starts at 0 right past the dead zone rather than jumping straight to
-	// (mag - dz)'s raw value.
-	t = ( mag - dz ) / ( 1.0f - dz );
-	if ( t > 1.0f )
-	{
-		t = 1.0f;
-	}
-
-	if ( cl_gamepadMoveCurve->integer )
-	{
-		// Quadratic response: easier to hold a slow, precise walk near
-		// the dead zone, same full run at t==1 either way.
-		t = t * t;
-	}
-
-	moveForward = forward * ( t / mag );
-	moveRight = side * ( t / mag );
-	moveMagnitude = t;
-	moveActive = qtrue;
+	moveActive = Aurora_Stick_Radial( side, forward, dz, (qboolean)cl_gamepadMoveCurve->integer,
+		&moveRight, &moveForward, &moveMagnitude );
 }
 
-// Mirrors CL_KeyMove's own walk speed of 64 out of a 127 max - below that
-// fraction of full deflection the stick should still read as "walking"
-// for BUTTON_WALKING (leg anim/footstep volume, bg_pmove.cpp), exactly the
-// speed a keyboard's Shift-less forward key already produces; from there
-// up to full deflection it reads as running, the same way holding Shift
-// (or cl_run 1) does today. This is deliberately a fixed fraction, not a
-// cvar - it is what "the same speeds a keyboard already uses" means, not
-// a feel knob.
-#define AURORA_GAMEPAD_RUN_FRACTION ( 64.0f / 127.0f )
+// Walk/run split - see AURORA_STICK_RUN_FRACTION's own comment
+// (sdl_stickmath.h), shared with the touch-UI's virtual stick.
 
 qboolean Aurora_Gamepad_GetMove( int *forwardmove, int *rightmove, qboolean *walking )
 {
@@ -251,7 +218,7 @@ qboolean Aurora_Gamepad_GetMove( int *forwardmove, int *rightmove, qboolean *wal
 
 	*forwardmove = (int)( moveForward * 127.0f );
 	*rightmove = (int)( moveRight * 127.0f );
-	*walking = (qboolean)( moveMagnitude < AURORA_GAMEPAD_RUN_FRACTION );
+	*walking = (qboolean)( moveMagnitude < AURORA_STICK_RUN_FRACTION );
 	return qtrue;
 }
 

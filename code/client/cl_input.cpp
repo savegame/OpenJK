@@ -36,6 +36,10 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // Analog left-stick movement (CL_AuroraGamepadMove below) - see
 // shared/sdl/sdl_gamepad.h for the full design rationale.
 #include "sdl/sdl_gamepad.h"
+// Analog virtual-stick movement (CL_AuroraTouchMove below) - see
+// shared/sdl/sdl_touchui.h's Aurora_TouchUI_GetMove for the contract; it
+// mirrors Aurora_Gamepad_GetMove above exactly.
+#include "sdl/sdl_touchui.h"
 #endif
 
 unsigned	frame_msec;
@@ -580,6 +584,49 @@ static void CL_AuroraGamepadMove( usercmd_t *cmd ) {
 		cmd->buttons &= ~BUTTON_WALKING;
 	}
 }
+
+/*
+=================
+CL_AuroraTouchMove
+
+Adds continuous virtual-stick movement on top of whatever
+CL_KeyMove/CL_JoystickMove/CL_AuroraGamepadMove already produced this
+frame - the touch-UI's left-half stick (shared/sdl/sdl_touchui.cpp) is the
+exact same kind of analog move source as the gamepad's left stick above,
+just driven by a finger instead of an SDL_GameController axis, and
+Aurora_TouchUI_GetMove() hands back the same -127..127, already
+dead-zone-rescaled and curve-shaped forward/right delta (see
+Aurora_TouchUI_GetMove's contract, sdl_touchui.h). Added (ClampChar), not
+overwritten, so this composes with a keyboard or a real gamepad used at
+the same time instead of fighting either - the touch-UI overlay normally
+hides itself the moment a real gamepad is detected (see
+sdl_touchui.cpp's Aurora_TouchUI_NoteJoystickChange), but nothing here
+depends on that: both functions simply add whatever they have, and each
+is a no-op for a frame it has nothing to contribute.
+
+BUTTON_WALKING is decided by the stick's own deflection, same rule as the
+gamepad's left stick (AURORA_STICK_RUN_FRACTION, sdl_stickmath.h) - only
+touched when the virtual stick actually contributed to this cmd, so it
+never fights a keyboard/gamepad-only frame either.
+=================
+*/
+static void CL_AuroraTouchMove( usercmd_t *cmd ) {
+	int forward, right;
+	qboolean walking;
+
+	if ( !Aurora_TouchUI_GetMove( &forward, &right, &walking ) ) {
+		return;
+	}
+
+	cmd->forwardmove = ClampChar( cmd->forwardmove + forward );
+	cmd->rightmove = ClampChar( cmd->rightmove + right );
+
+	if ( walking ) {
+		cmd->buttons |= BUTTON_WALKING;
+	} else {
+		cmd->buttons &= ~BUTTON_WALKING;
+	}
+}
 #endif
 
 /*
@@ -759,6 +806,11 @@ usercmd_t CL_CreateCmd( void ) {
 	// get analog movement from the Aurora gamepad's left stick - not part
 	// of CL_JoystickMove above, see CL_AuroraGamepadMove's comment for why.
 	CL_AuroraGamepadMove( &cmd );
+
+	// get analog movement from the Aurora touch-UI's virtual stick - see
+	// CL_AuroraTouchMove's comment for why this is the same kind of
+	// contribution as the gamepad's, just from a different source.
+	CL_AuroraTouchMove( &cmd );
 #endif
 
 	// check to make sure the angles haven't wrapped
