@@ -540,12 +540,12 @@ static void Aurora_TouchUI_Layout( void )
 	touchButtons[TB_FORCE_USE].cy = touchButtons[TB_CROUCH].cy;
 
 	touchButtons[TB_FORCE_PREV].radiusMm = smallMm * 0.5f;
-	touchButtons[TB_FORCE_PREV].cx = touchButtons[TB_FORCE_USE].cx - smallMm - gapMm;
-	touchButtons[TB_FORCE_PREV].cy = touchButtons[TB_FORCE_USE].cy;
+	touchButtons[TB_FORCE_PREV].cx = visualWmm * 0.5 - smallMm - gapMm;
+	touchButtons[TB_FORCE_PREV].cy = bottom - gapMm;
 
 	touchButtons[TB_FORCE_NEXT].radiusMm = smallMm * 0.5f;
-	touchButtons[TB_FORCE_NEXT].cx = touchButtons[TB_FORCE_USE].cx + smallMm + gapMm;
-	touchButtons[TB_FORCE_NEXT].cy = touchButtons[TB_FORCE_USE].cy;
+	touchButtons[TB_FORCE_NEXT].cx = visualWmm * 0.5 + smallMm + gapMm;
+	touchButtons[TB_FORCE_NEXT].cy = bottom - gapMm;
 }
 
 /*
