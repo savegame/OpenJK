@@ -1319,6 +1319,40 @@ void RB_StageIteratorGeneric( void )
 
 	RB_DeformTessGeometry();
 
+	// Port omission found by comparing against vk_shade_geometry.cpp:2358-2363
+	// (the reference this file was derived from). RB_LightingPass()/
+	// RB_RenderLitSurfList() (tr_backend.cpp) set tess.dlightPass and re-run
+	// every lit surface through RB_EndSurface() -> optimalStageIteratorFunc(),
+	// i.e. straight back into this function, expecting a *single* lightweight
+	// additive overlay (vk_lighting_pass(): EQUAL depth test, no depth write,
+	// one bundle) instead of a second full multi-stage draw.
+	//
+	// Without this early-out, a surface touched by any dynamic light (the
+	// lightsaber's dlight; an explosion/fire's own dlight) fell through to the
+	// normal per-stage loop below and got its *entire* shader - every stage,
+	// with that stage's own state_bits - drawn a second time this frame:
+	//
+	//   - stage 0 usually carries GLS_DEPTHMASK_TRUE, so the redundant pass
+	//     rewrites the depth buffer for those triangles with a second,
+	//     independently-computed z. Decals sitting on the same triangles were
+	//     already drawn with their small polygon offset against the *first*
+	//     pass's z; comparing against this slightly different rewritten z
+	//     under GL_LEQUAL flips per pixel/per frame - z-fighting that only
+	//     appears once a dlight (the saber) is in the scene.
+	//   - multi-stage additive shaders (fire, explosions - which emit their
+	//     own dlight) got their whole stage sequence drawn twice per frame,
+	//     the extra copy racing the first under GL_LEQUAL depth compare -
+	//     seen as two textures alternating frame to frame instead of blending
+	//     together in one frame.
+	//
+	// Restore the dispatch so dlightPass surfaces take the single-quad path.
+#ifdef USE_PMLIGHT
+	if ( tess.dlightPass ) {
+		vk_lighting_pass();
+		return;
+	}
+#endif
+
 	tess_flags = tess.shader->tessFlags;
 
 	fogCollapse = qfalse;
