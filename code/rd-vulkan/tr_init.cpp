@@ -1298,6 +1298,14 @@ void C_LevelLoadEnd( void )
 	CModelCache->LevelLoadEnd( qfalse );
 	ri.SND_RegisterAudio_LevelLoadEnd( qfalse );
 	ri.S_RestartMusic();
+
+	// The server leaves gbAlreadyDoingLoad set after a savegame reads
+	// successfully ("need to wait until client spawn", sv_savegame.cpp) and
+	// relies on the renderer to clear it here, at the first snapshot after
+	// the load - rd-vanilla does exactly this at the end of
+	// RE_RegisterMedia_LevelLoadEnd. Without it every later "load" (menu or
+	// quick load) is silently dropped as "Already loading".
+	*(ri.gbAlreadyDoingLoad()) = qfalse;
 }
 
 // SP refexport LerpTag returns void; the internal helper keeps the MP-style
