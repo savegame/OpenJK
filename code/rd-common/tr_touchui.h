@@ -53,7 +53,7 @@ along with OpenJK; if not, see <http://www.gnu.org/licenses/>.
 // POINT needs the window<->content transform - no separate width/height
 // swap logic for rectangles is needed anywhere in this feature.
 
-#define AURORA_TOUCH_MAX_BUTTONS 12
+#define AURORA_TOUCH_MAX_BUTTONS 14
 
 typedef struct {
 	float				x, y;			// window px, centre

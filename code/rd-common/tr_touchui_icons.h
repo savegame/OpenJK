@@ -46,6 +46,9 @@ typedef enum {
 	AURORA_TOUCH_ICON_ROLL,		// partial circular arc with an arrowhead -
 									// tumble/roll (distinct from CROUCH's
 									// straight arrow-onto-floor)
+	AURORA_TOUCH_ICON_WEAP_PREV,	// double chevron pointing left - weapprev,
+									// distinct from FORCE_PREV's single chevron
+	AURORA_TOUCH_ICON_WEAP_NEXT,	// double chevron pointing right - weapnext
 
 	AURORA_TOUCH_ICON_COUNT
 } auroraTouchIcon_t;

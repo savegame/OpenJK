@@ -275,6 +275,33 @@ static void Aurora_TouchIcon( ImDrawList *list, auroraTouchIcon_t icon, const Im
 			break;
 		}
 
+		case AURORA_TOUCH_ICON_WEAP_PREV:
+		{
+			// Two stacked chevrons (a "«"/fast-rewind glyph), pointing left -
+			// distinct from FORCE_PREV's single chevron, reads as "step
+			// through a list" rather than "the one current thing".
+			int j;
+			for ( j = 0; j < 2; j++ )
+			{
+				const float dx = -s * 0.15f - (float)j * s * 0.45f;
+				const ImVec2 tip = Local::P( c, dx, 0.0f, transform );
+				Aurora_TouchArrowHead( list, tip, Local::V( -1.0f, 0.0f, transform ), s * 0.5f, color, thickness );
+			}
+			break;
+		}
+
+		case AURORA_TOUCH_ICON_WEAP_NEXT:
+		{
+			int j;
+			for ( j = 0; j < 2; j++ )
+			{
+				const float dx = s * 0.15f + (float)j * s * 0.45f;
+				const ImVec2 tip = Local::P( c, dx, 0.0f, transform );
+				Aurora_TouchArrowHead( list, tip, Local::V( 1.0f, 0.0f, transform ), s * 0.5f, color, thickness );
+			}
+			break;
+		}
+
 		case AURORA_TOUCH_ICON_ROLL:
 		{
 			// A partial circular arc with an arrowhead at its leading end -

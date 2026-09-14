@@ -93,6 +93,8 @@ typedef enum {
 	TB_FORCE_PREV,	// bottom centre, one-shot - forceprev
 	TB_FORCE_USE,	// bottom centre, held like fire - +useforce/-useforce
 	TB_FORCE_NEXT,	// bottom centre, one-shot - forcenext
+	TB_WEAP_PREV,	// bottom right, one-shot - weapprev (same command as gamepad LB)
+	TB_WEAP_NEXT,	// bottom right, one-shot - weapnext (same command as gamepad RB)
 	TB_COUNT
 } touchButtonIndex_t;
 
@@ -173,6 +175,18 @@ static touchButton_t touchButtons[TB_COUNT] = {
 	{ "forceprev\n",  NULL,            AURORA_TOUCH_ICON_FORCE_PREV, NULL, 0, 1 },
 	{ "+useforce\n",  "-useforce\n",   AURORA_TOUCH_ICON_FORCE,      NULL, 0, 0 },
 	{ "forcenext\n",  NULL,            AURORA_TOUCH_ICON_FORCE_NEXT, NULL, 0, 1 },
+
+	// Weapon prev/next: the same stateless one-shot console commands bound
+	// to the gamepad's LB/RB (aurora_gamepad_defaults.cfg's JOY9/JOY10 -
+	// "bind JOY9 weapprev" / "bind JOY10 weapnext"), so this is just another
+	// input path to a command the engine already exposes - no new engine
+	// behaviour. One-shot for the same reason forceprev/forcenext are
+	// above: cycling the selected weapon is a discrete step, nothing to
+	// hold. Laid out bottom-right, one button-width past TB_FORCE_NEXT
+	// (see Aurora_TouchUI_Layout) - not its own top-level cluster, just a
+	// continuation of the force row so the thumb barely has to move.
+	{ "weapprev\n",   NULL,            AURORA_TOUCH_ICON_WEAP_PREV,  NULL, 0, 1 },
+	{ "weapnext\n",   NULL,            AURORA_TOUCH_ICON_WEAP_NEXT,  NULL, 0, 1 },
 
 	// Roll/tumble - touch-UI discoverability, not a new engine mechanic:
 	// mechanically a roll is just running (stick at run deflection, not
@@ -526,7 +540,7 @@ static void Aurora_TouchUI_Layout( void )
 
 	touchButtons[TB_USE].radiusMm = smallMm * 0.5f;
 	touchButtons[TB_USE].cx = touchButtons[TB_JUMP].cx;
-	touchButtons[TB_USE].cy = smallMm * 0.5f;
+	touchButtons[TB_USE].cy = margin + smallMm * 0.5f;
 
 	// Force prev/use/next (port task B-002): bottom centre, three small
 	// circles in a row - "use" in the middle (same size as the other
@@ -546,6 +560,25 @@ static void Aurora_TouchUI_Layout( void )
 	touchButtons[TB_FORCE_NEXT].radiusMm = smallMm * 0.5f;
 	touchButtons[TB_FORCE_NEXT].cx = visualWmm * 0.5 + smallMm + gapMm;
 	touchButtons[TB_FORCE_NEXT].cy = bottom - gapMm;
+
+	// Weapon prev/next (port task, touch-UI): same row as the force
+	// cluster, continuing right towards the bottom-right corner - kept
+	// off the true edge by `margin` like everything else, same as the
+	// force buttons are (research/touch_ui_research.md: edges stay clear
+	// for Aurora's own system gestures). Position is entirely relative to
+	// TB_FORCE_NEXT, never an absolute screen coordinate:
+	//   - adjacent buttons in this row sit one diameter + one gap apart
+	//     (smallMm + gapMm - see FORCE_PREV/FORCE_USE/FORCE_NEXT above);
+	//   - the user asked for a gap the width of one whole button between
+	//     the force row and this pair, i.e. one MORE (smallMm + gapMm)
+	//     than the normal adjacent spacing, before TB_WEAP_PREV's centre.
+	touchButtons[TB_WEAP_PREV].radiusMm = smallMm * 0.5f;
+	touchButtons[TB_WEAP_PREV].cx = touchButtons[TB_FORCE_NEXT].cx + 2.0f * ( smallMm + gapMm );
+	touchButtons[TB_WEAP_PREV].cy = touchButtons[TB_FORCE_NEXT].cy;
+
+	touchButtons[TB_WEAP_NEXT].radiusMm = smallMm * 0.5f;
+	touchButtons[TB_WEAP_NEXT].cx = touchButtons[TB_WEAP_PREV].cx + smallMm + gapMm;
+	touchButtons[TB_WEAP_NEXT].cy = touchButtons[TB_FORCE_NEXT].cy;
 }
 
 /*
