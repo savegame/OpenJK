@@ -366,6 +366,14 @@ void vk_create_window( void )
 		// logical shape exactly.
 		{
 			uint32_t outW, outH;
+
+			// The render scale has to be known BEFORE the output size is
+			// derived from it: vk_create_window() runs this block first and
+			// only calls vk_initialize() (which does its own set_scale) after,
+			// so without seeding it here the first FBO would always come out
+			// at full size no matter what the launcher passed in.
+			gles3_fbo_set_scale( ri.Cvar_Get( "cl_auroraFboScale", "1.0", CVAR_ARCHIVE_ND )->value );
+
 			gles3_fbo_output_size_for_window( vk.windowWidth, vk.windowHeight, &outW, &outH );
 			glConfig.vidWidth = (int)outW;
 			glConfig.vidHeight = (int)outH;

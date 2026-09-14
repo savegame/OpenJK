@@ -162,15 +162,36 @@ static void gles3_fbo_init_rotation_mats( void )
 // how that buffer is drawn on screen.
 void gles3_fbo_output_size_for_window( uint32_t winW, uint32_t winH, uint32_t *outW, uint32_t *outH )
 {
+	uint32_t w = winW;
+	uint32_t h = winH;
+
 #ifdef AURORA
+	// Landscape game on a portrait panel: the FBO is the window with its
+	// sides transposed, which is what set_buffer_transform(90/270) expects.
 	if ( winH > winW ) {
-		if ( outW ) *outW = winH;
-		if ( outH ) *outH = winW;
-		return;
+		w = winH;
+		h = winW;
 	}
 #endif
-	if ( outW ) *outW = winW;
-	if ( outH ) *outH = winH;
+
+	// Render scale (launcher's "r_3d_scale" -> cl_auroraFboScale): the FBO is
+	// rendered at a fraction of the screen and stretched back over it by the
+	// blit quad, so a smaller scale means less fill work per frame. Only the
+	// FBO shrinks - the window, the blit viewport and the buttons drawn over
+	// it stay at native size. The input transform divides pointer deltas by
+	// the same factor (shared/sdl/sdl_input.cpp), which is why set_scale
+	// mirrors it into that cvar.
+	if ( vk.fbo.scale > 0.0f && vk.fbo.scale != 1.0f ) {
+		w = (uint32_t)( (float)w * vk.fbo.scale + 0.5f );
+		h = (uint32_t)( (float)h * vk.fbo.scale + 0.5f );
+
+		// never let a silly scale collapse the buffer entirely
+		if ( w < 64 ) w = 64;
+		if ( h < 64 ) h = 64;
+	}
+
+	if ( outW ) *outW = w;
+	if ( outH ) *outH = h;
 }
 
 void gles3_fbo_init_program( void )
@@ -463,7 +484,11 @@ void gles3_fbo_get_size( uint32_t *width, uint32_t *height )
 
 void gles3_fbo_set_scale( float scale )
 {
-	vk.fbo.scale = ( scale > 0.0f ) ? scale : 1.0f;
+	// same range the launcher's slider offers (gameport/docs/imgui_launcher.md)
+	if ( scale < 0.25f ) scale = 0.25f;
+	if ( scale > 2.0f )  scale = 2.0f;
+
+	vk.fbo.scale = scale;
 
 #ifdef AURORA
 	// Port stage 4 (shared/sdl/sdl_input.cpp, Aurora_TransformInputDeltaF):
