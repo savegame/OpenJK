@@ -384,7 +384,23 @@ void vk_bind_geometry( uint32_t flags )
 	uint32_t xyz_size = numVertexes * sizeof(tess.xyz[0]);
 	uint32_t st_size = numVertexes * sizeof(vec2_t);
 	uint32_t nnn_size = numVertexes * sizeof(tess.normal[0]);
-	uint32_t mask = 0;
+	// Carry the already-bound set forward instead of starting empty. The
+	// shared backend (tr_shader.cpp ~4622-4626) uploads deltas: once an
+	// earlier stage of this surface has supplied ST<n>/RGBA<n> with the same
+	// tcGen/rgbGen, a later stage's tessFlags has that bit stripped and never
+	// asks for it again, relying on the earlier upload staying bound - which
+	// is exactly what vkCmdBindVertexBuffers persistence gives the Vulkan
+	// reference (vk_shade_geometry.cpp) for free. Starting mask at 0 here
+	// made gles3_commit_attribs() (below) disable every attribute this call
+	// did not re-supply, so the later stage sampled/colored with GL's
+	// disabled-array default instead of the earlier stage's data - visible on
+	// multi-stage animated materials (fire, explosions) as a stage silently
+	// going black/UV-(0,0) each frame it drew after the one that owned the
+	// bit, i.e. the two textures appearing to alternate instead of blending
+	// in the same frame. Stage 0 always re-supplies XYZ|RGBA0|ST0 itself
+	// (tr_shader.cpp:4330, never stripped), so this never leaks stale data
+	// across two different surfaces - only within one surface's own stages.
+	uint32_t mask = g_geom.enabled;
 	byte *ptr;
 
 	if ( gles3_geometry_buffer_overflow() )
