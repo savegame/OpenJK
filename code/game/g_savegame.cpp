@@ -1247,6 +1247,67 @@ static void ReadGEntities(qboolean qbAutosave)
 	{
 		ReadInUseBits();//really shouldn't need to read these bits in at all, just restore them from the ents...
 	}
+
+#ifdef AURORA
+	if (!qbAutosave)
+	{
+		// [AURORA] A savegame can be made mid-script - e.g. during a scripted
+		// NPC dialogue/cutscene. GameAllowedToSaveHere() (below) only refuses
+		// saves while an in-camera cinematic (in_camera) is playing; a normal
+		// scripted conversation is not "in_camera" and is not blocked.
+		//
+		// ICARUS task waits that were pending at save time are faithfully
+		// restored as "still pending" by IIcarusInterface::Load() above
+		// (both the per-entity ent->taskID[] mirror and ICARUS's own task
+		// GUIDs round-trip through the save file unchanged), but most task
+		// types have no way to naturally complete afterwards: the per-frame
+		// game logic that would normally signal completion (path following,
+		// animation blending, turning, etc.) does not resume from a
+		// snapshot. In fact pEnt->waypoint was just explicitly zeroed a few
+		// lines above, with the comment "NPCs and other ents store
+		// waypoints that aren't valid after a load" - so an NPC that was
+		// mid-TID_MOVE_NAV at save time will never reach its goal and never
+		// call Q3_TaskIDComplete() for it.
+		//
+		// Of all the task types, only TID_CHAN_VOICE and TID_LOCATION are
+		// polled for completion every frame regardless of how they were
+		// reached (see G_CheckTasksCompleted() in g_main.cpp: it completes
+		// TID_CHAN_VOICE once gi.VoiceVolume[] shows no sound playing, and
+		// TID_LOCATION once the entity's current trigger_location matches) -
+		// so leave those two alone. Every other task type - TID_ANIM_UPPER/
+		// LOWER/BOTH, TID_MOVE_NAV, TID_ANGLE_FACE, TID_BSTATE, TID_RESIZE,
+		// TID_SHOOT - can be left blocked forever, which freezes the whole
+		// ICARUS sequence (and anything sequenced after it: further
+		// dialogue, NPC movement, a door open, etc.) permanently mid-script.
+		//
+		// As a safety net, force through any of those non-self-healing
+		// tasks that is still pending right after all savegame state has
+		// been restored, exactly once, so a script can never hang forever
+		// just because it happened to be captured mid-action.
+		for (int entNum = 0; entNum < globals.num_entities; entNum++)
+		{
+			gentity_t *hungEnt = &g_entities[entNum];
+
+			if (!hungEnt->inuse)
+			{
+				continue;
+			}
+
+			for (int tid = 0; tid < NUM_TIDS; tid++)
+			{
+				if (tid == TID_CHAN_VOICE || tid == TID_LOCATION)
+				{//these two already complete themselves correctly every frame, see G_CheckTasksCompleted()
+					continue;
+				}
+
+				if (Q3_TaskIDPending(hungEnt, (taskID_t)tid))
+				{
+					Q3_TaskIDComplete(hungEnt, (taskID_t)tid);
+				}
+			}
+		}
+	}
+#endif
 }
 
 
