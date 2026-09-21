@@ -1305,6 +1305,52 @@ static void ReadGEntities(qboolean qbAutosave)
 					Q3_TaskIDComplete(hungEnt, (taskID_t)tid);
 				}
 			}
+
+			// [AURORA] The loop above only unblocks the *game*-side task mirror
+			// (ent->taskID[]). It deliberately does not (and cannot) touch a
+			// pending ICARUS-native wait("N")/waitsignal("NAME") task, because
+			// those never go through ent->taskID[] at all - they live purely in
+			// that entity's own CTaskManager::m_tasks queue (see
+			// TaskManager.cpp WaitSignal()/Wait()) and are re-checked once per
+			// frame by IIcarusInterface::GetIcarus()->Update(m_iIcarusID).
+			//
+			// For an NPC, that per-frame Update() call is only reachable from
+			// inside NPC_Think() (see NPC.cpp: "must update icarus *every*
+			// frame..."), which is itself only invoked when G_RunThink() finds
+			// ent->nextthink due. Non-NPC ICARUS-driven entities (e.g. a
+			// target_scriptrunner cutting down a tree) don't have this
+			// restriction: G_RunThink() ticks their ICARUS unconditionally,
+			// every frame, regardless of think timing (see the "runicarus:"
+			// label in g_main.cpp). NPCs have no such fallback: if NPC_Think()
+			// doesn't run - or keeps taking an early-return before reaching its
+			// own Update() call - the NPC's whole ICARUS state, including a
+			// pending waitsignal(), silently stops being polled forever, with
+			// nothing left to re-arm it.
+			//
+			// Two concrete ways that can happen right after a mid-script load:
+			//  1) svFlags still carries SVF_ICARUS_FREEZE from the moment of
+			//     the save (e.g. a freeze() bracketing the NPC's dialogue line
+			//     that is only lifted by a *later* step of the very sequence
+			//     that's now stuck waiting). svFlags round-trips through the
+			//     save file unchanged, so the freeze persists after load, and
+			//     NPC_Think()'s own freeze check (NPC.cpp) keeps returning
+			//     before it ever reaches the Update() call - which is exactly
+			//     what would have cleared the freeze in the first place.
+			//  2) ent->nextthink, also round-tripped verbatim, simply doesn't
+			//     line up closely enough with the freshly-restored level.time
+			//     for NPC_Think() to have run yet on the very first post-load
+			//     frames.
+			//
+			// Only touch NPCs whose ICARUS still has unfinished work after the
+			// load (IsRunning()) - an NPC with nothing left queued is left
+			// exactly as the level designer intended, frozen or not.
+			if (hungEnt->NPC
+				&& hungEnt->m_iIcarusID != IIcarusInterface::ICARUS_INVALID
+				&& IIcarusInterface::GetIcarus()->IsRunning(hungEnt->m_iIcarusID))
+			{
+				hungEnt->svFlags &= ~SVF_ICARUS_FREEZE;
+				IIcarusInterface::GetIcarus()->Update(hungEnt->m_iIcarusID);
+			}
 		}
 	}
 #endif
