@@ -148,10 +148,28 @@ MarkTaskComplete
 
 bool CTaskGroup::MarkTaskComplete( int id )
 {
-	if ( (m_completedTasks.find( id )) != m_completedTasks.end() )
+	taskCallback_m::iterator ti = m_completedTasks.find( id );
+
+	if ( ti != m_completedTasks.end() )
 	{
-		m_completedTasks[ id ] = true;
-		m_numCompleted++;
+		// [AURORA] Completing the same task GUID twice used to increment
+		// m_numCompleted twice as well, even though m_completedTasks.size()
+		// (the denominator Complete() compares it against) only grew by one
+		// task the first time. Once that happens m_numCompleted permanently
+		// exceeds m_completedTasks.size(), so Complete()'s "==" check can
+		// never be true again and any wait("groupname") on this group hangs
+		// forever - this is possible any time the same GUID's completion is
+		// reported through two different paths (e.g. a game-side taskID[]
+		// slot that is left set to an already-ICARUS-completed GUID, later
+		// force-completed a second time - see g_savegame.cpp's post-load
+		// taskID[] unsticking loop). Marking an already-completed task
+		// complete again must be a no-op, exactly like completing it the
+		// first time is the only thing that should ever count.
+		if ( !ti->second )
+		{
+			ti->second = true;
+			m_numCompleted++;
+		}
 
 		return true;
 	}
