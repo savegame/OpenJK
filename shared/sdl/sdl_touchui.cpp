@@ -642,6 +642,8 @@ fire (keys go to console/UI instead) - the skip button must not claim to
 do something the engine itself would not do from the same input right now.
 =================
 */
+extern qboolean SG_GameAllowedToSaveHere( qboolean inCamera );	// code/server/sv_savegame.cpp
+
 static int Aurora_TouchUI_RoqCinematicActive( void )
 {
 	return cls.state == CA_CINEMATIC || CL_IsRunningInGameCinematic();
@@ -1312,6 +1314,8 @@ void Aurora_TouchUI_Frame( void )
 	overlay.alpha = cl_touchUIAlpha->value;
 	overlay.transform = Aurora_TouchUI_GetTransform();
 
+	const qboolean saveAllowed = SG_GameAllowedToSaveHere( qfalse );
+
 	overlay.numButtons = TB_COUNT;
 	if ( overlay.numButtons > AURORA_TOUCH_MAX_BUTTONS )
 	{
@@ -1332,6 +1336,9 @@ void Aurora_TouchUI_Frame( void )
 		overlay.buttons[i].icon = b->icon;
 		overlay.buttons[i].label = b->label;
 		overlay.buttons[i].pressed = b->held || b->latched;
+		// [AURORA] SAVE looks muted while the game refuses to save (scripted
+		// speech, cutscene, dead...). Same check the "save" command makes.
+		overlay.buttons[i].disabled = ( i == TB_SAVE && !saveAllowed );
 	}
 
 	if ( touchStick.held )

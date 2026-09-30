@@ -462,13 +462,21 @@ static void Aurora_TouchUI_Build( ImDrawList *list, const AuroraTouchDrawFrame *
 	{
 		const AuroraTouchButtonDraw &b = frame->buttons[i];
 		const ImVec2 c( b.x, b.y );
-		const ImU32 fill = b.pressed
+		ImU32 fill = b.pressed
 			? Aurora_TouchColor( 0x3B, 0x82, 0xF6, alpha * 0.8f )
 			: Aurora_TouchColor( 0, 0, 0, alpha * 0.4f );
-		const ImU32 edge = b.pressed
+		ImU32 edge = b.pressed
 			? Aurora_TouchColor( 255, 255, 255, alpha )
 			: Aurora_TouchColor( 255, 255, 255, alpha * 0.7f );
-		const ImU32 content = Aurora_TouchColor( 255, 255, 255, alpha * 0.95f );
+		ImU32 content = Aurora_TouchColor( 255, 255, 255, alpha * 0.95f );
+		const float dim = b.disabled ? 0.35f : 1.0f;
+
+		if ( b.disabled )
+		{
+			fill = Aurora_TouchColor( 0, 0, 0, alpha * 0.4f * dim );
+			edge = Aurora_TouchColor( 255, 255, 255, alpha * 0.7f * dim );
+			content = Aurora_TouchColor( 255, 255, 255, alpha * 0.95f * dim );
+		}
 
 		if ( b.label )
 		{

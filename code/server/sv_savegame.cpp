@@ -353,7 +353,14 @@ void SV_SaveGame_f(void)
 	}
 
 	if (!SG_GameAllowedToSaveHere(qfalse))	//full check
+	{
+#ifdef AURORA
+		// [AURORA] was a silent return - tell the player why nothing happened.
+		// (Also covers the touch SAVE button / quicksave, which go via "save".)
+		Com_Printf( S_COLOR_RED "Can't save right now (scene in progress).\n" );
+#endif
 		return;	// this prevents people saving via quick-save now during cinematics.
+	}
 
 #ifdef JK2_MODE
 	if ( !Q_stricmp (filename, "quik*") || !Q_stricmp (filename, "auto*") )

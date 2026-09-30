@@ -68,6 +68,7 @@ typedef struct {
 										// "SKIP"), so the pointer stays valid forever with no
 										// lifetime tie to any per-frame buffer (port task B-003).
 	int					pressed;		// 1 while a finger holds it (or it is latched)
+	int					disabled;		// 1: draw muted (action currently not allowed, e.g. SAVE)
 } auroraTouchButton_t;
 
 typedef struct {

@@ -67,6 +67,7 @@ typedef struct {
 										// already-laid-out quad/glyph vertices about the button
 										// centre, not the shapes' own local definitions).
 	int					pressed;
+	int					disabled;
 } AuroraTouchButtonDraw;
 
 typedef struct {

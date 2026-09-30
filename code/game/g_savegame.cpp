@@ -1420,8 +1420,41 @@ void ReadLevel(qboolean qbAutosave, qboolean qbLoadTransition)
 }
 
 extern int killPlayerTimer;
+#ifdef AURORA
+// [AURORA] True while any entity's script is blocked waiting for a voice line
+// (sound( CHAN_VOICE*, ... ) followed by wait()/task wait) to finish.
+// A save made in that window restores the pending ICARUS voice task but the
+// sound-end completion never fires again, so the script hangs forever after
+// load (seen: yavin1b, Rosh: sound(...rosh/01rop008.mp3); wait("help")).
+// Deliberately narrow: ent->taskID[TID_CHAN_VOICE] is >= 0 only while a
+// script is waiting on a voice line, so a statist standing in BS_CINEMATIC
+// for a whole level does NOT trip it - only actual scripted speech does.
+static qboolean Aurora_ScriptedSpeechActive( void )
+{
+	for ( int i = 0; i < globals.num_entities; i++ )
+	{
+		const gentity_t *ent = &g_entities[i];
+		if ( !ent->inuse )
+		{
+			continue;
+		}
+		if ( Q3_TaskIDPending( const_cast<gentity_t *>( ent ), TID_CHAN_VOICE ) )
+		{
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+#endif
+
 qboolean GameAllowedToSaveHere(void)
 {
+#ifdef AURORA
+	if ( Aurora_ScriptedSpeechActive() )
+	{
+		return qfalse;
+	}
+#endif
 	return (qboolean)(!in_camera&&!killPlayerTimer);
 }
 
