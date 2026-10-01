@@ -280,6 +280,8 @@ vmCvar_t	cg_fov;
 vmCvar_t	cg_fovAspectAdjust;
 #ifdef AURORA
 vmCvar_t	cg_letterbox;
+vmCvar_t	cg_cineHorPlus;
+vmCvar_t	cg_cineMaxAspect;
 #endif
 vmCvar_t	cg_endcredits;
 vmCvar_t	cg_updatedDataPadForcePower1;
@@ -358,6 +360,8 @@ static cvarTable_t cvarTable[] = {
 	{ &cg_fovAspectAdjust, "cg_fovAspectAdjust", "0", CVAR_ARCHIVE },
 #ifdef AURORA
 	{ &cg_letterbox, "cg_letterbox", "0", CVAR_ARCHIVE },
+	{ &cg_cineHorPlus, "cg_cineHorPlus", "1", CVAR_ARCHIVE },
+	{ &cg_cineMaxAspect, "cg_cineMaxAspect", "2.4", CVAR_ARCHIVE },
 #endif
 	{ &cg_stereoSeparation, "cg_stereoSeparation", "0.4", CVAR_ARCHIVE  },
 	{ &cg_shadows, "cg_shadows", "1", CVAR_ARCHIVE  },

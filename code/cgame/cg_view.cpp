@@ -1257,12 +1257,30 @@ CG_CalcFovFromX
 Calcs Y FOV from given X FOV
 ====================
 */
+#ifdef AURORA
+static qboolean	cg_fovCinematic = qfalse;
+#endif
+
 qboolean CG_CalcFOVFromX( float fov_x )
 {
 	float	x;
 	float	fov_y;
 	qboolean	inwater;
 
+#ifdef AURORA
+	if ( cg_fovCinematic && cg_cineHorPlus.integer ) {
+		// Cutscene camera: the FOV was authored as horizontal FOV at 4:3.
+		// Keep the implied vertical FOV and widen horizontally (Hor+).
+		float aspect = (float)cgs.glconfig.vidWidth/(float)cgs.glconfig.vidHeight;
+		if ( cg_cineMaxAspect.value >= 1.0f && aspect > cg_cineMaxAspect.value ) {
+			aspect = cg_cineMaxAspect.value;
+		}
+		if ( aspect > 4.0f/3.0f ) {
+			fov_x = atan( tan( fov_x*M_PI / 360.0f ) * 0.75f*aspect )*360.0f / M_PI;
+		}
+	}
+	else
+#endif
 	if ( cg_fovAspectAdjust.integer ) {
 		// Based on LordHavoc's code for Darkplaces
 		// http://www.quakeworld.nu/forum/topic/53/what-does-your-qw-look-like/page/30
@@ -1317,6 +1335,18 @@ qboolean CG_CalcFOVFromX( float fov_x )
 
 	return (inwater);
 }
+
+#ifdef AURORA
+// Used by the scripted cutscene camera (CGCam_Update)
+qboolean CG_CalcFOVFromXCinematic( float fov_x )
+{
+	qboolean r;
+	cg_fovCinematic = qtrue;
+	r = CG_CalcFOVFromX( fov_x );
+	cg_fovCinematic = qfalse;
+	return r;
+}
+#endif
 
 float CG_ForceSpeedFOV( void )
 {

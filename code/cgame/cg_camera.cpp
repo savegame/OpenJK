@@ -39,6 +39,10 @@ void CGCam_TrackDisable( void );
 void CGCam_Distance( float distance, qboolean initLerp );
 void CGCam_DistanceDisable( void );
 extern qboolean CG_CalcFOVFromX( float fov_x );
+#ifdef AURORA
+extern qboolean CG_CalcFOVFromXCinematic( float fov_x );
+#define CG_CalcFOVFromX CG_CalcFOVFromXCinematic
+#endif
 extern void WP_SaberCatch( gentity_t *self, gentity_t *saber, qboolean switchToSaber );
 
 /*
