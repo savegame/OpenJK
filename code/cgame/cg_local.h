@@ -603,6 +603,9 @@ extern	vmCvar_t		cg_autoswitch;
 extern	vmCvar_t		cg_simpleItems;
 extern	vmCvar_t		cg_fov;
 extern	vmCvar_t		cg_fovAspectAdjust;
+#ifdef AURORA
+extern	vmCvar_t		cg_letterbox;
+#endif
 extern	vmCvar_t		cg_endcredits;
 extern	vmCvar_t		cg_updatedDataPadForcePower1;
 extern	vmCvar_t		cg_updatedDataPadForcePower2;

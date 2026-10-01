@@ -278,6 +278,9 @@ vmCvar_t	cg_autoswitch;
 vmCvar_t	cg_simpleItems;
 vmCvar_t	cg_fov;
 vmCvar_t	cg_fovAspectAdjust;
+#ifdef AURORA
+vmCvar_t	cg_letterbox;
+#endif
 vmCvar_t	cg_endcredits;
 vmCvar_t	cg_updatedDataPadForcePower1;
 vmCvar_t	cg_updatedDataPadForcePower2;
@@ -353,6 +356,9 @@ static cvarTable_t cvarTable[] = {
 	{ &cg_drawGun, "cg_drawGun", "1", CVAR_ARCHIVE },
 	{ &cg_fov, "cg_fov", "80", CVAR_ARCHIVE },
 	{ &cg_fovAspectAdjust, "cg_fovAspectAdjust", "0", CVAR_ARCHIVE },
+#ifdef AURORA
+	{ &cg_letterbox, "cg_letterbox", "0", CVAR_ARCHIVE },
+#endif
 	{ &cg_stereoSeparation, "cg_stereoSeparation", "0.4", CVAR_ARCHIVE  },
 	{ &cg_shadows, "cg_shadows", "1", CVAR_ARCHIVE  },
 	{ &cg_renderToTextureFX, "cg_renderToTextureFX", "1", CVAR_ARCHIVE  },
