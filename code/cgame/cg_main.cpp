@@ -357,7 +357,14 @@ static cvarTable_t cvarTable[] = {
 	{ &cg_autoswitch, "cg_autoswitch", "1", CVAR_ARCHIVE },
 	{ &cg_drawGun, "cg_drawGun", "1", CVAR_ARCHIVE },
 	{ &cg_fov, "cg_fov", "80", CVAR_ARCHIVE },
+#ifdef AURORA
+	// Phones are 20:9 and wider: with the vanilla Vert- default the view loses
+	// a lot of its vertical field. Hor+ (keep 4:3 vertical FOV, widen sideways)
+	// is the comfortable default here.
+	{ &cg_fovAspectAdjust, "cg_fovAspectAdjust", "1", CVAR_ARCHIVE },
+#else
 	{ &cg_fovAspectAdjust, "cg_fovAspectAdjust", "0", CVAR_ARCHIVE },
+#endif
 #ifdef AURORA
 	{ &cg_letterbox, "cg_letterbox", "0", CVAR_ARCHIVE },
 	{ &cg_cineHorPlus, "cg_cineHorPlus", "1", CVAR_ARCHIVE },
