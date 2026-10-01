@@ -781,6 +781,14 @@ void R_BindAnimatedImage( const textureBundle_t *bundle ) {
 	if ( bundle->isVideoMap ) {
 		ri.CIN_RunCinematic( bundle->videoMapHandle );
 		ri.CIN_UploadCinematic( bundle->videoMapHandle );
+		// GL: the upload path unbinds the texture (glBindTexture 0) and may
+		// have recreated the texture object, so rebind the scratch image on
+		// the current TMU (vulkan used descriptor sets and didn't need this).
+		if ( tr.scratchImage[bundle->videoMapHandle] ) {
+			vk_bind( tr.scratchImage[bundle->videoMapHandle] );
+		} else {
+			vk_bind( bundle->image[0] );
+		}
 		return;
 	}
 	if ( bundle->isScreenMap ) {
