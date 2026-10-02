@@ -83,6 +83,12 @@ void Aurora_TouchUI_Draw( void )
 	frame.pixelsPerMm  = aurora_touchOverlay.pixelsPerMm;
 	frame.transform    = aurora_touchOverlay.transform;
 
+	// The draw-side array must hold every button the client can send, or the
+	// last ones are silently dropped here while still being hit-tested on the
+	// client side (TB_WEAP_NEXT was invisible but tappable exactly this way).
+	static_assert( AURORA_TOUCH_DRAW_MAX_BUTTONS >= AURORA_TOUCH_MAX_BUTTONS,
+		"AURORA_TOUCH_DRAW_MAX_BUTTONS must be >= AURORA_TOUCH_MAX_BUTTONS" );
+
 	frame.numButtons = aurora_touchOverlay.numButtons;
 	if ( frame.numButtons > AURORA_TOUCH_DRAW_MAX_BUTTONS )
 	{
