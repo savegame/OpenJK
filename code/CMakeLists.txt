@@ -81,6 +81,10 @@ if(BuildSPEngine OR BuildJK2SPEngine)
 			pkg_check_modules(WAYLAND_CLIENT REQUIRED wayland-client)
 			set(SPEngineIncludeDirectories ${SPEngineIncludeDirectories} ${WAYLAND_CLIENT_INCLUDE_DIRS})
 			set(SPEngineLibraries ${SPEngineLibraries} ${WAYLAND_CLIENT_LINK_LIBRARIES})
+			# MCE display-blanking inhibit (shared/sdl/mce_keepalive.c): GLib/GDBus.
+			pkg_check_modules(GLIB2 REQUIRED glib-2.0 gio-2.0)
+			set(SPEngineIncludeDirectories ${SPEngineIncludeDirectories} ${GLIB2_INCLUDE_DIRS})
+			set(SPEngineLibraries ${SPEngineLibraries} ${GLIB2_LINK_LIBRARIES})
 		else()
 			# OpenGL
 			find_package(OpenGL REQUIRED)
@@ -396,6 +400,15 @@ if(BuildSPEngine OR BuildJK2SPEngine)
 		# either module.
 		"${SharedDir}/sdl/sdl_stickmath.h"
 		)
+
+	if(AURORA)
+		# MCE display-blanking inhibit (gameport/docs/mce_display_blanking.md);
+		# plain C, header has extern "C".
+		set(SPEngineSysFiles ${SPEngineSysFiles}
+			"${SharedDir}/sdl/mce_keepalive.h"
+			"${SharedDir}/sdl/mce_keepalive.c"
+			)
+	endif()
 
 	if(WIN32)
 		set(SPEngineSysFiles

@@ -40,6 +40,21 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 // Physical gamepad support (SDL_GameController) - default dual-stick
 // layout, a separate translation unit; see sdl_gamepad.h for the design.
 #include "sdl_gamepad.h"
+
+// Display-blanking inhibit via MCE (gameport/docs/mce_display_blanking.md);
+// plain-C module, inert when MCE/system bus is unavailable.
+#include "mce_keepalive.h"
+
+static qboolean aurora_mceMinimized = qfalse;
+static qboolean aurora_mceUnfocused = qfalse;
+static qboolean aurora_mceBackground = qfalse;
+
+// Prevent blanking only while the app is really in the foreground.
+static void Aurora_Mce_Update( void )
+{
+	mce_keepalive_set_prevent_blanking(
+		!aurora_mceMinimized && !aurora_mceUnfocused && !aurora_mceBackground );
+}
 #endif
 
 static cvar_t *in_keyboardDebug     = NULL;
@@ -1065,6 +1080,13 @@ void IN_Init( void *windowData )
 	IN_InitJoystick( );
 
 #ifdef AURORA
+	// Display must not blank while the game is in the foreground.
+	mce_keepalive_init();
+	aurora_mceMinimized  = ( appState & SDL_WINDOW_MINIMIZED ) ? qtrue : qfalse;
+	aurora_mceUnfocused  = ( appState & SDL_WINDOW_INPUT_FOCUS ) ? qfalse : qtrue;
+	aurora_mceBackground = qfalse;
+	Aurora_Mce_Update();
+
 	Aurora_RotationInit();
 
 	// Port stage 4 (second half): touch-as-trackpad in the menu - see the
@@ -1567,15 +1589,40 @@ static void IN_ProcessEvents( void )
 				Cbuf_ExecuteText(EXEC_NOW, "quit Closed window\n");
 				break;
 
+#ifdef AURORA
+			case SDL_APP_WILLENTERBACKGROUND:
+				aurora_mceBackground = qtrue;
+				Aurora_Mce_Update();
+				break;
+
+			case SDL_APP_DIDENTERFOREGROUND:
+				aurora_mceBackground = qfalse;
+				Aurora_Mce_Update();
+				break;
+#endif
+
 			case SDL_WINDOWEVENT:
 				switch( e.window.event )
 				{
-					case SDL_WINDOWEVENT_MINIMIZED:    Cvar_SetValue( "com_minimized", 1 ); break;
+					case SDL_WINDOWEVENT_MINIMIZED:
+						Cvar_SetValue( "com_minimized", 1 );
+#ifdef AURORA
+						aurora_mceMinimized = qtrue; Aurora_Mce_Update();
+#endif
+						break;
 					case SDL_WINDOWEVENT_RESTORED:
-					case SDL_WINDOWEVENT_MAXIMIZED:    Cvar_SetValue( "com_minimized", 0 ); break;
+					case SDL_WINDOWEVENT_MAXIMIZED:
+						Cvar_SetValue( "com_minimized", 0 );
+#ifdef AURORA
+						aurora_mceMinimized = qfalse; Aurora_Mce_Update();
+#endif
+						break;
 					case SDL_WINDOWEVENT_FOCUS_LOST:
 					{
 						Cvar_SetValue( "com_unfocused", 1 );
+#ifdef AURORA
+						aurora_mceUnfocused = qtrue; Aurora_Mce_Update();
+#endif
 						SNDDMA_Activate( qfalse );
 						break;
 					}
@@ -1583,6 +1630,9 @@ static void IN_ProcessEvents( void )
 					case SDL_WINDOWEVENT_FOCUS_GAINED:
 					{
 						Cvar_SetValue( "com_unfocused", 0 );
+#ifdef AURORA
+						aurora_mceUnfocused = qfalse; Aurora_Mce_Update();
+#endif
 						SNDDMA_Activate( qtrue );
 						break;
 					}
@@ -1874,6 +1924,10 @@ static void IN_JoyMove( void )
 void IN_Frame (void) {
 	qboolean loading;
 
+#ifdef AURORA
+	mce_keepalive_pump();	// drives the MCE blanking-pause renewal timer
+#endif
+
 	IN_JoyMove( );
 
 	// If not DISCONNECTED (main menu) or ACTIVE (in game), we're loading
@@ -1947,6 +2001,9 @@ void IN_Shutdown( void ) {
 
 #ifdef AURORA
 	Aurora_TouchUI_Shutdown();
+
+	// Cancels the blanking pause and disconnects (IN_Init reconnects).
+	mce_keepalive_shutdown();
 #endif
 
 	SDL_window = NULL;
