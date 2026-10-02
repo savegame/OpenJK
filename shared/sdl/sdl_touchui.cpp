@@ -468,7 +468,7 @@ static void Aurora_TouchUI_Layout( void )
 	margin  = cl_touchUIEdgeMargin->value;
 	sizeMm  = cl_touchUIButtonSize->value;
 	smallMm = sizeMm * 0.85f;
-	bigMm   = sizeMm * 1.5f;
+	bigMm   = sizeMm * 1.35f;
 	gapMm   = sizeMm * 0.35f;
 
 	right  = visualWmm - margin;
@@ -526,17 +526,25 @@ static void Aurora_TouchUI_Layout( void )
 	touchButtons[TB_FIRE].cx = right - bigMm * 1.45f;
 	touchButtons[TB_FIRE].cy = bottom - bigMm * 2.0f;
 
+	#define buttons_radius (bigMm + smallMm + gapMm)
+	#define sin_jump 0.99806251497629 //86
+	#define cos_jump 0.062219098347737 
+
 	touchButtons[TB_JUMP].radiusMm = smallMm * 0.5f;
-	touchButtons[TB_JUMP].cx = right - smallMm * 0.3f;
-	touchButtons[TB_JUMP].cy = bottom - smallMm * 3.5f;
+	touchButtons[TB_JUMP].cx = touchButtons[TB_FIRE].cx - buttons_radius * 0.5 * sin_jump;
+	touchButtons[TB_JUMP].cy = touchButtons[TB_FIRE].cy + buttons_radius * 0.5 * cos_jump;
 
+	#define sin_crounch -0.124197099553  // 170
+	#define cos_crounch -0.99225756760159
 	touchButtons[TB_CROUCH].radiusMm = smallMm * 0.5f;
-	touchButtons[TB_CROUCH].cx = touchButtons[TB_FIRE].cx - gapMm;
-	touchButtons[TB_CROUCH].cy = touchButtons[TB_FIRE].cy - smallMm - gapMm;
+	touchButtons[TB_CROUCH].cx = touchButtons[TB_FIRE].cx - buttons_radius * 0.5 * sin_crounch;
+	touchButtons[TB_CROUCH].cy = touchButtons[TB_FIRE].cy + buttons_radius * 0.5 * cos_crounch;
 
+	#define sin_altfire 0.73135370161917
+	#define cos_altfire -0.6819983600625
 	touchButtons[TB_ALTFIRE].radiusMm = smallMm * 0.5f;
-	touchButtons[TB_ALTFIRE].cx = right - smallMm * 0.3f;
-	touchButtons[TB_ALTFIRE].cy = touchButtons[TB_FIRE].cy - smallMm - gapMm ;
+	touchButtons[TB_ALTFIRE].cx = touchButtons[TB_FIRE].cx - buttons_radius * 0.5 * sin_altfire;
+	touchButtons[TB_ALTFIRE].cy = touchButtons[TB_FIRE].cy + buttons_radius * 0.5 * cos_altfire;
 
 	touchButtons[TB_USE].radiusMm = smallMm * 0.5f;
 	touchButtons[TB_USE].cx = touchButtons[TB_JUMP].cx;
@@ -549,9 +557,12 @@ static void Aurora_TouchUI_Layout( void )
 	// clear of both the SAVE/LOAD row (top centre) and the fire cluster
 	// (right) at any reasonable screen size - see the layout comment atop
 	// this function for why edges stay clear (margin) the same way.
+	
+	#define sin_force -0.96592582628907 // 255
+	#define cos_force -0.25881904510252
 	touchButtons[TB_FORCE_USE].radiusMm = smallMm * 0.5f;
-	touchButtons[TB_FORCE_USE].cx = touchButtons[TB_CROUCH].cx - gapMm - smallMm;
-	touchButtons[TB_FORCE_USE].cy = touchButtons[TB_CROUCH].cy;
+	touchButtons[TB_FORCE_USE].cx = touchButtons[TB_FIRE].cx - buttons_radius * 0.5f * sin_force;
+	touchButtons[TB_FORCE_USE].cy = touchButtons[TB_FIRE].cy + buttons_radius * 0.5f * cos_force;
 
 	touchButtons[TB_FORCE_PREV].radiusMm = smallMm * 0.5f;
 	touchButtons[TB_FORCE_PREV].cx = visualWmm * 0.5 - smallMm - gapMm;
